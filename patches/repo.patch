@@ -1,0 +1,4594 @@
+diff --git a/app/app_sana.py b/app/app_sana.py
+index 1b46c79..80b75f9 100755
+--- a/app/app_sana.py
++++ b/app/app_sana.py
+@@ -29,7 +29,7 @@ import numpy as np
+ import spaces
+ import torch
+ from PIL import Image
+-from torchvision.utils import make_grid, save_image
++from torchvision.utils import save_image
+ from transformers import AutoModelForCausalLM, AutoTokenizer
+ 
+ from app import safety_check
+diff --git a/app/app_sana_4bit_compare_bf16.py b/app/app_sana_4bit_compare_bf16.py
+index e378a22..349093d 100644
+--- a/app/app_sana_4bit_compare_bf16.py
++++ b/app/app_sana_4bit_compare_bf16.py
+@@ -179,7 +179,7 @@ def generate(
+         prompt = "A peaceful world."
+     images, latency_strs = [], []
+     for i, pipeline in enumerate(pipelines):
+-        progress = gr.Progress(track_tqdm=True)
++        gr.Progress(track_tqdm=True)
+         start_time = time.time()
+         image = pipeline(
+             prompt=prompt,
+diff --git a/app/app_sana_inpaint.py b/app/app_sana_inpaint.py
+index 181f4dd..80c40ff 100644
+--- a/app/app_sana_inpaint.py
++++ b/app/app_sana_inpaint.py
+@@ -5,7 +5,7 @@ import cv2
+ import gradio as gr
+ import numpy as np
+ import torch
+-from PIL import Image, ImageDraw, ImageFilter
++from PIL import Image, ImageFilter
+ from transformers import AutoModelForCausalLM, AutoTokenizer
+ 
+ from app import safety_check
+diff --git a/app/safety_check.py b/app/safety_check.py
+index a08eb70..5bbef5a 100644
+--- a/app/safety_check.py
++++ b/app/safety_check.py
+@@ -16,9 +16,7 @@
+ # This file is copy from https://github.com/mit-han-lab/hart/blob/main/hart/utils/safety_check.py
+ 
+ import torch
+-import transformers
+ from torch.nn.functional import softmax
+-from transformers import AutoModelForCausalLM, AutoTokenizer
+ 
+ __all__ = ["is_dangerous"]
+ 
+diff --git a/app/sana_controlnet_pipeline.py b/app/sana_controlnet_pipeline.py
+index c5035da..dac96b4 100644
+--- a/app/sana_controlnet_pipeline.py
++++ b/app/sana_controlnet_pipeline.py
+@@ -15,7 +15,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ import warnings
+ from dataclasses import dataclass, field
+-from typing import Optional, Tuple
++from typing import Optional
+ 
+ import cv2
+ import numpy as np
+@@ -28,37 +28,19 @@ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ 
+ from diffusion import DPMS, FlowEuler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+-from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar, resize_and_crop_tensor
++from diffusion.model.utils import (
++    get_weight_dtype,
++    guidance_type_select,
++    prepare_prompt_ar,
++    resize_and_crop_tensor,
++)
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.logger import get_root_logger
+ from tools.controlnet.utils import get_scribble_map, transform_control_signal
+ from tools.download import find_model
+ 
+ 
+-def guidance_type_select(default_guidance_type, pag_scale, attn_type):
+-    guidance_type = default_guidance_type
+-    if not (pag_scale > 1.0 and attn_type == "linear"):
+-        guidance_type = "classifier-free"
+-    elif pag_scale > 1.0 and attn_type == "linear":
+-        guidance_type = "classifier-free_PAG"
+-    return guidance_type
+-
+-
+-def classify_height_width_bin(height: int, width: int, ratios: dict) -> Tuple[int, int]:
+-    """Returns binned height and width."""
+-    ar = float(height / width)
+-    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
+-    default_hw = ratios[closest_ratio]
+-    return int(default_hw[0]), int(default_hw[1])
+-
+-
+ def get_ar_from_ref_image(ref_image):
+     def reduce_ratio(h, w):
+         def gcd(a, b):
+diff --git a/app/sana_pipeline.py b/app/sana_pipeline.py
+index 38cd9a6..7417f17 100644
+--- a/app/sana_pipeline.py
++++ b/app/sana_pipeline.py
+@@ -15,7 +15,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ import warnings
+ from dataclasses import dataclass, field
+-from typing import Optional, Tuple
++from typing import Optional
+ 
+ import pyrallis
+ import torch
+@@ -25,14 +25,14 @@ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ 
+ from diffusion import DPMS, FlowEuler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+-from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar, resize_and_crop_tensor
++from diffusion.model.utils import (
++    classify_height_width_bin,
++    get_weight_dtype,
++    guidance_type_select,
++    prepare_prompt_ar,
++    resize_and_crop_tensor,
++)
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.logger import get_root_logger
+ 
+@@ -40,23 +40,6 @@ from diffusion.utils.logger import get_root_logger
+ from tools.download import find_model
+ 
+ 
+-def guidance_type_select(default_guidance_type, pag_scale, attn_type):
+-    guidance_type = default_guidance_type
+-    if not (pag_scale > 1.0 and attn_type == "linear"):
+-        guidance_type = "classifier-free"
+-    elif pag_scale > 1.0 and attn_type == "linear":
+-        guidance_type = "classifier-free_PAG"
+-    return guidance_type
+-
+-
+-def classify_height_width_bin(height: int, width: int, ratios: dict) -> Tuple[int, int]:
+-    """Returns binned height and width."""
+-    ar = float(height / width)
+-    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
+-    default_hw = ratios[closest_ratio]
+-    return int(default_hw[0]), int(default_hw[1])
+-
+-
+ @dataclass
+ class SanaInference(SanaConfig):
+     config: Optional[str] = "configs/sana_config/1024ms/Sana_1600M_img1024.yaml"  # config
+diff --git a/app/sana_pipeline_inpaint.py b/app/sana_pipeline_inpaint.py
+index 05eb332..57b7dce 100644
+--- a/app/sana_pipeline_inpaint.py
++++ b/app/sana_pipeline_inpaint.py
+@@ -15,9 +15,8 @@
+ # SPDX-License-Identifier: Apache-2.0
+ import warnings
+ from dataclasses import dataclass, field
+-from typing import Optional, Tuple
++from typing import Optional
+ 
+-import cv2
+ import numpy as np
+ import pyrallis
+ import torch
+@@ -28,39 +27,22 @@ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ 
+ from diffusion import DPMS, FlowEuler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+-from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar, resize_and_crop_tensor
++from diffusion.model.utils import (
++    classify_height_width_bin,
++    get_weight_dtype,
++    guidance_type_select,
++    prepare_prompt_ar,
++    resize_and_crop_tensor,
++)
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.logger import get_root_logger
+-from tools.controlnet.utils import get_scribble_map, transform_control_signal
++from tools.controlnet.utils import transform_control_signal
+ 
+ # from diffusion.utils.misc import read_config
+ from tools.download import find_model
+ 
+ 
+-def guidance_type_select(default_guidance_type, pag_scale, attn_type):
+-    guidance_type = default_guidance_type
+-    if not (pag_scale > 1.0 and attn_type == "linear"):
+-        guidance_type = "classifier-free"
+-    elif pag_scale > 1.0 and attn_type == "linear":
+-        guidance_type = "classifier-free_PAG"
+-    return guidance_type
+-
+-
+-def classify_height_width_bin(height: int, width: int, ratios: dict) -> Tuple[int, int]:
+-    """Returns binned height and width."""
+-    ar = float(height / width)
+-    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
+-    default_hw = ratios[closest_ratio]
+-    return int(default_hw[0]), int(default_hw[1])
+-
+-
+ def tensor_to_pil(tensor):
+     # Ensure tensor is on CPU and convert to uint8
+     tensor = (tensor / 2 + 0.5).clamp(0, 1).cpu()
+@@ -237,15 +219,7 @@ class SanaPipelineInpaint(nn.Module):
+         prompts = prompt if isinstance(prompt, list) else [prompt]
+ 
+         for prompt in prompts:
+-            # data prepare
+-            prompts, hw, ar = (
+-                [],
+-                torch.tensor([[self.image_size, self.image_size]], dtype=torch.float, device=self.device).repeat(
+-                    num_images_per_prompt, 1
+-                ),
+-                torch.tensor([[1.0]], device=self.device).repeat(num_images_per_prompt, 1),
+-            )
+-
++            prompts = []
+             for _ in range(num_images_per_prompt):
+                 prompts.append(prepare_prompt_ar(prompt, self.base_ratios, device=self.device, show=False)[0].strip())
+ 
+diff --git a/app/sana_sprint_pipeline.py b/app/sana_sprint_pipeline.py
+index 0394efd..903d903 100644
+--- a/app/sana_sprint_pipeline.py
++++ b/app/sana_sprint_pipeline.py
+@@ -17,7 +17,7 @@
+ import os
+ import warnings
+ from dataclasses import dataclass, field
+-from typing import List, Optional, Tuple
++from typing import List, Optional
+ 
+ import pyrallis
+ import torch
+@@ -29,22 +29,18 @@ os.environ["DISABLE_XFORMERS"] = "1"
+ 
+ 
+ from diffusion import SCMScheduler
+-from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+-from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar, resize_and_crop_tensor
++from diffusion.model.utils import (
++    classify_height_width_bin,
++    get_weight_dtype,
++    prepare_prompt_ar,
++    resize_and_crop_tensor,
++)
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.logger import get_root_logger
+ from tools.download import find_model
+ 
+ 
+-def classify_height_width_bin(height: int, width: int, ratios: dict) -> Tuple[int, int]:
+-    """Returns binned height and width."""
+-    ar = float(height / width)
+-    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
+-    default_hw = ratios[closest_ratio]
+-    return int(default_hw[0]), int(default_hw[1])
+-
+-
+ @dataclass
+ class SanaSprintInference(SanaConfig):
+     config: Optional[str] = "configs/sana_sprint_config/1024ms/SanaSprint_1600M_1024px_allqknorm_bf16_scm_ladd.yaml"
+diff --git a/diffusion/__init__.py b/diffusion/__init__.py
+index bf7cf87..e1d8fbe 100755
+--- a/diffusion/__init__.py
++++ b/diffusion/__init__.py
+@@ -1,5 +1,4 @@
+-__version__ = "0.2.1.dev0"
+-
++from diffusion._version import __version__
+ from diffusion.scheduler.dpm_solver import DPMS
+ from diffusion.scheduler.flow_euler_sampler import FlowEuler, LTXFlowEuler
+ from diffusion.scheduler.iddpm import Scheduler
+@@ -7,3 +6,15 @@ from diffusion.scheduler.longlive_flow_euler_sampler import LongLiveFlowEuler
+ from diffusion.scheduler.sa_sampler import SASolverSampler
+ from diffusion.scheduler.scm_scheduler import SCMScheduler
+ from diffusion.scheduler.trigflow_scheduler import TrigFlowScheduler
++
++__all__ = [
++    "__version__",
++    "DPMS",
++    "FlowEuler",
++    "LTXFlowEuler",
++    "LongLiveFlowEuler",
++    "SASolverSampler",
++    "SCMScheduler",
++    "Scheduler",
++    "TrigFlowScheduler",
++]
+diff --git a/diffusion/_version.py b/diffusion/_version.py
+new file mode 100644
+index 0000000..bce4785
+--- /dev/null
++++ b/diffusion/_version.py
+@@ -0,0 +1,9 @@
++"""Single source of truth for the ``diffusion`` package version.
++
++Kept as a leaf module (no internal imports) so utility code that needs the
++version string—e.g. ``diffusion.utils.import_utils.deprecate``—does not have
++to import the package, which would create a cycle through the schedulers
++re-exported from ``diffusion/__init__.py``.
++"""
++
++__version__ = "0.2.1.dev0"
+diff --git a/diffusion/data/__init__.py b/diffusion/data/__init__.py
+index 5bed347..59d5157 100755
+--- a/diffusion/data/__init__.py
++++ b/diffusion/data/__init__.py
+@@ -1,2 +1,4 @@
+ from .datasets import *
+ from .transforms import get_transform
++
++__all__ = ["get_transform"]
+diff --git a/diffusion/data/datasets/__init__.py b/diffusion/data/datasets/__init__.py
+index 3d34916..f734d0a 100755
+--- a/diffusion/data/datasets/__init__.py
++++ b/diffusion/data/datasets/__init__.py
+@@ -2,3 +2,12 @@ from .sana_data import SanaImgDataset, SanaWebDataset
+ from .sana_data_multi_scale import DummyDatasetMS, SanaWebDatasetMS
+ from .utils import *
+ from .video.sana_video_data import DistributePromptsDataset, SanaZipDataset
++
++__all__ = [
++    "DistributePromptsDataset",
++    "DummyDatasetMS",
++    "SanaImgDataset",
++    "SanaWebDataset",
++    "SanaWebDatasetMS",
++    "SanaZipDataset",
++]
+diff --git a/diffusion/data/datasets/sana_data_multi_scale.py b/diffusion/data/datasets/sana_data_multi_scale.py
+index e4f50ba..47bdae6 100755
+--- a/diffusion/data/datasets/sana_data_multi_scale.py
++++ b/diffusion/data/datasets/sana_data_multi_scale.py
+@@ -22,7 +22,6 @@ import traceback
+ 
+ import numpy as np
+ import torch
+-from PIL import Image
+ from torchvision import transforms as T
+ from torchvision.transforms.functional import InterpolationMode
+ from tqdm import tqdm
+@@ -269,7 +268,6 @@ class DummyDatasetMS(SanaWebDatasetMS):
+ if __name__ == "__main__":
+     from torch.utils.data import DataLoader
+ 
+-    from diffusion.data.datasets.utils import ASPECT_RATIO_1024
+     from diffusion.data.transforms import get_transform
+ 
+     image_size = 256
+diff --git a/diffusion/data/datasets/video/sana_video_data.py b/diffusion/data/datasets/video/sana_video_data.py
+index 64e8010..0bb7c26 100644
+--- a/diffusion/data/datasets/video/sana_video_data.py
++++ b/diffusion/data/datasets/video/sana_video_data.py
+@@ -27,7 +27,6 @@ from zipfile import ZipFile
+ import imageio.v3 as iio
+ import numpy as np
+ import torch
+-import torchvision.io as io
+ from termcolor import colored
+ from torch.utils.data import Dataset
+ from torchvision import transforms as T
+@@ -35,7 +34,6 @@ from torchvision import transforms as T
+ from diffusion.data.builder import DATASETS
+ from diffusion.data.datasets.utils import *
+ from diffusion.data.transforms import ResizeCrop, ToTensorVideo, get_closest_ratio
+-from diffusion.data.wids import lru_json_load
+ from diffusion.utils.logger import get_root_logger
+ 
+ 
+@@ -512,7 +510,7 @@ if __name__ == "__main__":
+     from tqdm import tqdm
+ 
+     from diffusion.data.wids import DistributedRangedSampler
+-    from diffusion.utils.data_sampler import AspectRatioBatchSampler, AspectRatioBatchSamplerVideo
++    from diffusion.utils.data_sampler import AspectRatioBatchSamplerVideo
+ 
+     image_size = (480, 832)  # 480x832
+     batch_size = 4
+diff --git a/diffusion/data/wids/wids.py b/diffusion/data/wids/wids.py
+index 33f1e42..f1a329f 100755
+--- a/diffusion/data/wids/wids.py
++++ b/diffusion/data/wids/wids.py
+@@ -90,20 +90,6 @@ def compute_file_md5sum(fname: Union[str, BinaryIO], chunksize: int = 1000000) -
+     return md5.hexdigest()
+ 
+ 
+-def compute_file_md5sum(fname: Union[str, BinaryIO], chunksize: int = 1000000) -> str:
+-    """Compute the md5sum of a file in chunks."""
+-    md5 = hashlib.md5()
+-    if isinstance(fname, str):
+-        with open(fname, "rb") as f:
+-            for chunk in iter(lambda: f.read(chunksize), b""):
+-                md5.update(chunk)
+-    else:
+-        fname.seek(0)
+-        for chunk in iter(lambda: fname.read(chunksize), b""):
+-            md5.update(chunk)
+-    return md5.hexdigest()
+-
+-
+ def compute_num_samples(fname):
+     ds = IndexedTarSamples(fname)
+     return len(ds)
+diff --git a/diffusion/longsana/model/dmd_sana.py b/diffusion/longsana/model/dmd_sana.py
+index f7695e0..8b17903 100644
+--- a/diffusion/longsana/model/dmd_sana.py
++++ b/diffusion/longsana/model/dmd_sana.py
+@@ -12,10 +12,10 @@ from termcolor import colored
+ 
+ from diffusion.longsana.pipeline.sana_inference_pipeline import SanaInferencePipeline
+ from diffusion.longsana.sana_video_pipeline import LongSANAVideoInference
+-from diffusion.longsana.utils.debug_option import DEBUG, LOG_GPU_MEMORY
++from diffusion.longsana.utils.debug_option import DEBUG
+ from diffusion.longsana.utils.loss import get_denoising_loss
+ from diffusion.longsana.utils.model_wrapper import SanaModelWrapper, SanaTextEncoder, SanaVAEWrapper
+-from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
++from diffusion.model.builder import build_model
+ from diffusion.utils.config import model_video_init_config
+ from tools.download import find_model
+ 
+diff --git a/diffusion/longsana/model/ode_regression_sana.py b/diffusion/longsana/model/ode_regression_sana.py
+index 76f20e5..3164c6f 100644
+--- a/diffusion/longsana/model/ode_regression_sana.py
++++ b/diffusion/longsana/model/ode_regression_sana.py
+@@ -1,19 +1,18 @@
+ import os
+ from typing import Tuple
+ 
+-import imageio
+ import pyrallis
+ import torch
+ import torch.distributed as dist
+ import torch.nn.functional as F
++from diffusers.models.modeling_outputs import Transformer2DModelOutput
+ from einops import rearrange
+ from termcolor import colored
+ 
+ from diffusion.longsana.pipeline.sana_training_pipeline import SanaTrainingPipeline
+ from diffusion.longsana.sana_video_pipeline import LongSANAVideoInference
+ from diffusion.longsana.utils.model_wrapper import SanaModelWrapper, SanaTextEncoder, SanaVAEWrapper
+-from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+-from diffusion.model.utils import get_weight_dtype
++from diffusion.model.builder import build_model
+ from diffusion.utils.config import model_video_init_config
+ from tools.download import find_model
+ 
+@@ -49,16 +48,6 @@ class SanaModelChunkWrapper(SanaModelWrapper):
+         )
+         if isinstance(model_out, tuple) and len(model_out) == 2:
+             model_out, kv_cache_ret = model_out
+-        else:
+-            pass
+-
+-        try:
+-            from diffusers.models.modeling_outputs import Transformer2DModelOutput
+-
+-            if isinstance(model_out, Transformer2DModelOutput):
+-                model_out = model_out[0]
+-        except Exception:
+-            pass
+ 
+         if isinstance(model_out, Transformer2DModelOutput):
+             model_out = model_out[0]
+diff --git a/diffusion/longsana/model/streaming_sana_long.py b/diffusion/longsana/model/streaming_sana_long.py
+index 0623988..a3dcfbe 100644
+--- a/diffusion/longsana/model/streaming_sana_long.py
++++ b/diffusion/longsana/model/streaming_sana_long.py
+@@ -13,11 +13,9 @@ from typing import Any, Dict, Optional, Tuple
+ import torch
+ import torch.distributed as dist
+ from einops import rearrange
+-from termcolor import colored
+ 
+ from diffusion.longsana.pipeline.sana_switch_training_pipeline import SanaSwitchTrainingPipeline
+-from diffusion.longsana.pipeline.sana_training_pipeline import SanaTrainingPipeline
+-from diffusion.longsana.utils.debug_option import DEBUG, DEBUG_GRADIENT, LOG_GPU_MEMORY
++from diffusion.longsana.utils.debug_option import DEBUG
+ 
+ 
+ class StreamingSANATrainingModel:
+diff --git a/diffusion/longsana/pipeline/sana_inference_interactive_pipeline.py b/diffusion/longsana/pipeline/sana_inference_interactive_pipeline.py
+index 68f8306..3405e8c 100644
+--- a/diffusion/longsana/pipeline/sana_inference_interactive_pipeline.py
++++ b/diffusion/longsana/pipeline/sana_inference_interactive_pipeline.py
+@@ -187,10 +187,7 @@ class SanaInferenceInteractivePipeline:
+         if num_segments <= 0:
+             raise ValueError("prompts must be a non-empty list")
+ 
+-        try:
+-            print(f"[SanaInferenceInteractivePipeline] num_segments={num_segments}, total_t={total_t}")
+-        except Exception:
+-            pass
++        print(f"[SanaInferenceInteractivePipeline] num_segments={num_segments}, total_t={total_t}")
+ 
+         # split into fixed block size (default 10 frames) chunks: the first chunk absorbs the remainder
+         chunk_indices = self._create_autoregressive_segments(total_t, self.num_frame_per_block)
+@@ -240,28 +237,22 @@ class SanaInferenceInteractivePipeline:
+             elif len(chunk_prompt_indices) < num_chunks:
+                 chunk_prompt_indices.extend([num_segments - 1] * (num_chunks - len(chunk_prompt_indices)))
+ 
+-        try:
+-            mapping = [
+-                f"[{chunk_indices[i]}:{chunk_indices[i+1]}) -> prompt[{chunk_prompt_indices[i]}]"
+-                for i in range(num_chunks)
+-            ]
+-            print("[SanaInferenceInteractivePipeline] segment mapping:", "; ".join(mapping))
+-        except Exception:
+-            pass
++        mapping = [
++            f"[{chunk_indices[i]}:{chunk_indices[i+1]}) -> prompt[{chunk_prompt_indices[i]}]"
++            for i in range(num_chunks)
++        ]
++        print("[SanaInferenceInteractivePipeline] segment mapping:", "; ".join(mapping))
+ 
+         for chunk_idx in range(num_chunks):
+             start_f = chunk_indices[chunk_idx]
+             end_f = chunk_indices[chunk_idx + 1]
+             local_latent = latents_bcthw[:, :, start_f:end_f]
+ 
+-            try:
+-                p_idx = chunk_prompt_indices[chunk_idx]
+-                cur_prompt = prompts[p_idx] if isinstance(prompts, (list, tuple)) else str(prompts)
+-                print(
+-                    f"[SanaInferenceInteractivePipeline] switch to prompt[{p_idx}] frames [{start_f}:{end_f}): {cur_prompt}"
+-                )
+-            except Exception:
+-                pass
++            p_idx = chunk_prompt_indices[chunk_idx]
++            cur_prompt = prompts[p_idx] if isinstance(prompts, (list, tuple)) else str(prompts)
++            print(
++                f"[SanaInferenceInteractivePipeline] switch to prompt[{p_idx}] frames [{start_f}:{end_f}): {cur_prompt}"
++            )
+ 
+             chunk_condition = None
+             chunk_mask = None
+@@ -299,12 +290,9 @@ class SanaInferenceInteractivePipeline:
+                         )
+                         kv_cache[chunk_idx - 1] = updated_prev_kv
+                     except Exception as e:
+-                        try:
+-                            print(
+-                                f"[SanaInferenceInteractivePipeline] recache failed at switch to chunk {chunk_idx}: {e}"
+-                            )
+-                        except Exception:
+-                            pass
++                        print(
++                            f"[SanaInferenceInteractivePipeline] recache failed at switch to chunk {chunk_idx}: {e}"
++                        )
+ 
+             chunk_kv_cache = self._accumulate_kv_cache(kv_cache, chunk_idx)
+             batch_size = local_latent.shape[0]
+diff --git a/diffusion/longsana/pipeline/sana_inference_interactive_pipeline_long_chunk.py b/diffusion/longsana/pipeline/sana_inference_interactive_pipeline_long_chunk.py
+index 379ce6a..cf5cf16 100644
+--- a/diffusion/longsana/pipeline/sana_inference_interactive_pipeline_long_chunk.py
++++ b/diffusion/longsana/pipeline/sana_inference_interactive_pipeline_long_chunk.py
+@@ -171,10 +171,7 @@ class SanaInferenceInteractivePipelineLongChunk:
+         if num_segments <= 0:
+             raise ValueError("prompts must be a non-empty list")
+ 
+-        try:
+-            print(f"[SanaInferenceInteractivePipeline] num_segments={num_segments}, total_t={total_t}")
+-        except Exception:
+-            pass
++        print(f"[SanaInferenceInteractivePipeline] num_segments={num_segments}, total_t={total_t}")
+ 
+         # divide the total frames by the number of prompts, and the remainder is distributed upfront
+         base = total_t // num_segments
+@@ -192,24 +189,18 @@ class SanaInferenceInteractivePipelineLongChunk:
+         output = torch.zeros_like(latents_bcthw)
+         kv_cache = self._initialize_kv_cache(num_chunks)
+ 
+-        try:
+-            mapping = [f"[{chunk_indices[i]}:{chunk_indices[i+1]}) -> prompt[{i}]" for i in range(num_chunks)]
+-            print("[SanaInferenceInteractivePipeline] segment mapping:", "; ".join(mapping))
+-        except Exception:
+-            pass
++        mapping = [f"[{chunk_indices[i]}:{chunk_indices[i+1]}) -> prompt[{i}]" for i in range(num_chunks)]
++        print("[SanaInferenceInteractivePipeline] segment mapping:", "; ".join(mapping))
+ 
+         for chunk_idx in range(num_chunks):
+             start_f = chunk_indices[chunk_idx]
+             end_f = chunk_indices[chunk_idx + 1]
+             local_latent = latents_bcthw[:, :, start_f:end_f]
+ 
+-            try:
+-                cur_prompt = prompts[chunk_idx] if isinstance(prompts, (list, tuple)) else str(prompts)
+-                print(
+-                    f"[SanaInferenceInteractivePipeline] switch to prompt[{chunk_idx}] frames [{start_f}:{end_f}): {cur_prompt}"
+-                )
+-            except Exception:
+-                pass
++            cur_prompt = prompts[chunk_idx] if isinstance(prompts, (list, tuple)) else str(prompts)
++            print(
++                f"[SanaInferenceInteractivePipeline] switch to prompt[{chunk_idx}] frames [{start_f}:{end_f}): {cur_prompt}"
++            )
+ 
+             chunk_condition = None
+             chunk_mask = None
+@@ -245,10 +236,7 @@ class SanaInferenceInteractivePipelineLongChunk:
+                     )
+                     kv_cache[chunk_idx - 1] = updated_prev_kv
+                 except Exception as e:
+-                    try:
+-                        print(f"[SanaInferenceInteractivePipeline] recache failed at switch to chunk {chunk_idx}: {e}")
+-                    except Exception:
+-                        pass
++                    print(f"[SanaInferenceInteractivePipeline] recache failed at switch to chunk {chunk_idx}: {e}")
+ 
+             chunk_kv_cache = self._accumulate_kv_cache(kv_cache, chunk_idx)
+             batch_size = local_latent.shape[0]
+diff --git a/diffusion/longsana/pipeline/sana_inference_pipeline.py b/diffusion/longsana/pipeline/sana_inference_pipeline.py
+index a4bd721..1fd07eb 100644
+--- a/diffusion/longsana/pipeline/sana_inference_pipeline.py
++++ b/diffusion/longsana/pipeline/sana_inference_pipeline.py
+@@ -1,8 +1,6 @@
+ from typing import List, Optional
+ 
+-import imageio
+ import torch
+-import torch.distributed as dist
+ from einops import rearrange
+ from termcolor import colored
+ 
+diff --git a/diffusion/longsana/pipeline/sana_switch_training_pipeline.py b/diffusion/longsana/pipeline/sana_switch_training_pipeline.py
+index ac7e368..f46bef0 100644
+--- a/diffusion/longsana/pipeline/sana_switch_training_pipeline.py
++++ b/diffusion/longsana/pipeline/sana_switch_training_pipeline.py
+@@ -1,7 +1,6 @@
+ from typing import Optional, Tuple
+ 
+ import torch
+-import torch.distributed as dist
+ from einops import rearrange
+ 
+ from diffusion.longsana.pipeline.sana_training_pipeline import SanaTrainingPipeline
+@@ -109,10 +108,7 @@ class SanaSwitchTrainingPipeline(SanaTrainingPipeline):
+                         )
+                         self.kv_cache[chunk_idx - 1 + previous_chunk_index] = updated_prev_kv
+                     except Exception as e:
+-                        try:
+-                            print(f"[SanaSwitchTrainingPipeline] recache failed at switch to chunk {chunk_idx}: {e}")
+-                        except Exception:
+-                            pass
++                        print(f"[SanaSwitchTrainingPipeline] recache failed at switch to chunk {chunk_idx}: {e}")
+ 
+             # accumulate history kv cache if needed
+             chunk_kv_cache = self._accumulate_kv_cache(self.kv_cache, chunk_idx + previous_chunk_index)
+diff --git a/diffusion/longsana/pipeline/sana_training_pipeline.py b/diffusion/longsana/pipeline/sana_training_pipeline.py
+index 6a064da..dd25076 100644
+--- a/diffusion/longsana/pipeline/sana_training_pipeline.py
++++ b/diffusion/longsana/pipeline/sana_training_pipeline.py
+@@ -1,6 +1,5 @@
+ from typing import List, Optional, Tuple
+ 
+-import imageio
+ import torch
+ import torch.distributed as dist
+ from einops import rearrange
+@@ -99,10 +98,6 @@ class SanaTrainingPipeline:
+             # "temp_max_length": None,  # 当前序列的临时最大长度
+         }
+ 
+-    def reach_max_frames(self) -> bool:
+-        """check if can generate more"""
+-        return self.state["current_chunk_index"] >= len(self.state["chunk_indices"]) - 1
+-
+     def setup_sequence(
+         self,
+         conditional_dict: dict,
+@@ -193,12 +188,6 @@ class SanaTrainingPipeline:
+         chunk_indices = self.create_autoregressive_segments(video_frames)
+         num_chunks = len(chunk_indices) - 1
+ 
+-        # Determine gradient-enabled range — if requires_grad=False, disable everywhere
+-        if not requires_grad:
+-            start_gradient_frame_index = video_frames  # Out of range: no gradients anywhere
+-        else:
+-            pass
+-
+         if condition.shape[0] == batch_size:
+             condition = condition.repeat_interleave(num_chunks, dim=0)
+             mask = mask[None].repeat_interleave(num_chunks, dim=0) if mask is not None else None
+@@ -557,8 +546,7 @@ class SanaTrainingPipeline:
+             collect_recursive(block)
+             return attention_modules + conv_modules
+ 
+-        # get the blocks of the model
+-        if hasattr(model, "blocks"):  # Common pattern
++        if hasattr(model, "blocks"):
+             blocks = model.blocks
+         elif hasattr(model, "transformer_blocks"):
+             blocks = model.transformer_blocks
+@@ -567,7 +555,6 @@ class SanaTrainingPipeline:
+         else:
+             raise ValueError("Sana model does not have any blocks")
+ 
+-        # Collect modules from each block
+         self.num_model_blocks = len(blocks)
+         for block_idx, block in enumerate(blocks):
+             block_modules = collect_from_block(block, block_idx)
+diff --git a/diffusion/longsana/sana_video_pipeline.py b/diffusion/longsana/sana_video_pipeline.py
+index 6e82918..dcb73cb 100644
+--- a/diffusion/longsana/sana_video_pipeline.py
++++ b/diffusion/longsana/sana_video_pipeline.py
+@@ -17,10 +17,6 @@ import warnings
+ from dataclasses import dataclass, field
+ from typing import Optional
+ 
+-import imageio
+-import pyrallis
+-import torch
+-import torch.nn as nn
+ 
+ warnings.filterwarnings("ignore")  # ignore warning
+ 
+diff --git a/diffusion/longsana/trainer/longsana_trainer.py b/diffusion/longsana/trainer/longsana_trainer.py
+index ada8cc9..63d6cc3 100644
+--- a/diffusion/longsana/trainer/longsana_trainer.py
++++ b/diffusion/longsana/trainer/longsana_trainer.py
+@@ -3,22 +3,15 @@ import logging
+ import random
+ import time
+ 
+-import numpy as np
+ import torch
+ import torch.distributed as dist
+ import wandb
+-from einops import rearrange
+-from omegaconf import OmegaConf
+ from termcolor import colored
+-from torch.distributed.fsdp import FullOptimStateDictConfig, FullStateDictConfig
+-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+-from torch.distributed.fsdp import StateDictType
+-from torchvision.io import write_video
+ 
+ from diffusion.longsana.model import StreamingSANATrainingModel
+-from diffusion.longsana.utils.debug_option import DEBUG, DEBUG_GRADIENT, LOG_GPU_MEMORY
+-from diffusion.longsana.utils.distributed import EMA_FSDP, fsdp_state_dict, fsdp_wrap, launch_distributed_job
+-from diffusion.longsana.utils.misc import merge_dict_list, set_seed
++from diffusion.longsana.utils.debug_option import DEBUG
++from diffusion.longsana.utils.distributed import EMA_FSDP
++from diffusion.longsana.utils.misc import merge_dict_list
+ 
+ from .self_forcing_trainer import Trainer as SelfForcingScoreDistillationTrainer
+ 
+@@ -210,10 +203,7 @@ class LongSANATrainer(SelfForcingScoreDistillationTrainer):
+             if DEBUG and (not dist.is_initialized() or dist.get_rank() == 0):
+                 print(f"[DEBUG] Scaled generator loss: {scaled_generator_loss.item()}")
+ 
+-            try:
+-                scaled_generator_loss.backward()
+-            except RuntimeError:
+-                raise
++            scaled_generator_loss.backward()
+ 
+             generator_log_dict.update(
+                 {
+diff --git a/diffusion/longsana/trainer/ode.py b/diffusion/longsana/trainer/ode.py
+index 64b36e4..3cd1fc2 100644
+--- a/diffusion/longsana/trainer/ode.py
++++ b/diffusion/longsana/trainer/ode.py
+@@ -311,9 +311,7 @@ class ODESANATrainer:
+ 
+     def save(self):
+         print("Start gathering distributed model states...")
+-        # save the inference model
+ 
+-        # Gather full state dict with optimizer support
+         with FSDP.state_dict_type(
+             self.model.generator,
+             StateDictType.FULL_STATE_DICT,
+diff --git a/diffusion/longsana/trainer/self_forcing_trainer.py b/diffusion/longsana/trainer/self_forcing_trainer.py
+index 93e5375..7e038ea 100644
+--- a/diffusion/longsana/trainer/self_forcing_trainer.py
++++ b/diffusion/longsana/trainer/self_forcing_trainer.py
+@@ -7,10 +7,7 @@ import torch
+ import torch.distributed as dist
+ import wandb
+ from omegaconf import OmegaConf
+-from termcolor import colored
+-from torch.distributed.fsdp import FullOptimStateDictConfig, FullStateDictConfig
+ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+-from torch.distributed.fsdp import StateDictType
+ from torchvision.io import write_video
+ 
+ from diffusion.longsana.model import DMDSana
+diff --git a/diffusion/longsana/utils/dataset.py b/diffusion/longsana/utils/dataset.py
+index 1e89998..f9c1565 100644
+--- a/diffusion/longsana/utils/dataset.py
++++ b/diffusion/longsana/utils/dataset.py
+@@ -37,47 +37,6 @@ class TextDataset(Dataset):
+         return batch
+ 
+ 
+-class TwoTextDataset(Dataset):
+-    """Dataset that returns two text prompts per sample for prompt-switch training.
+-
+-    The dataset behaves similarly to :class:`TextDataset` but instead of a single
+-    prompt, it provides *two* prompts – typically the first prompt is used for the
+-    first segment of the video, and the second prompt is used after a temporal
+-    switch during training.
+-
+-    Args:
+-        prompt_path (str): Path to a text file containing the *first* prompt for
+-            each sample. One prompt per line.
+-        switch_prompt_path (str): Path to a text file containing the *second*
+-            prompt for each sample. Must have the **same number of lines** as
+-            ``prompt_path`` so that prompts are paired 1-to-1.
+-    """
+-
+-    def __init__(self, prompt_path: str, switch_prompt_path: str):
+-        # Load the first-segment prompts.
+-        with open(prompt_path, encoding="utf-8") as f:
+-            self.prompt_list = [line.rstrip() for line in f]
+-
+-        # Load the second-segment prompts.
+-        with open(switch_prompt_path, encoding="utf-8") as f:
+-            self.switch_prompt_list = [line.rstrip() for line in f]
+-
+-        assert len(self.switch_prompt_list) == len(self.prompt_list), (
+-            "The two prompt files must contain the same number of lines so that "
+-            "each first-segment prompt is paired with exactly one second-segment prompt."
+-        )
+-
+-    def __len__(self):
+-        return len(self.prompt_list)
+-
+-    def __getitem__(self, idx):
+-        return {
+-            "prompts": self.prompt_list[idx],  # first-segment prompt
+-            "switch_prompts": self.switch_prompt_list[idx],  # second-segment prompt
+-            "idx": idx,
+-        }
+-
+-
+ class ODERegressionLMDBDataset(Dataset):
+     def __init__(self, data_path: str, max_pair: int = int(1e8)):
+         self.env = lmdb.open(data_path, readonly=True, lock=False, readahead=False, meminit=False)
+diff --git a/diffusion/longsana/utils/model_wrapper.py b/diffusion/longsana/utils/model_wrapper.py
+index 6679613..749bdf4 100644
+--- a/diffusion/longsana/utils/model_wrapper.py
++++ b/diffusion/longsana/utils/model_wrapper.py
+@@ -1,13 +1,11 @@
+ import types
+ from typing import List, Optional
+ 
+-import imageio
+ import torch
+-import torch.nn.functional as F
++from diffusers.models.modeling_outputs import Transformer2DModelOutput
+ from einops import rearrange
+-from termcolor import colored
+ 
+-from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
++from diffusion.model.builder import get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+ from diffusion.model.utils import get_weight_dtype
+ 
+ from .scheduler import FlowMatchScheduler, SchedulerInterface
+@@ -45,9 +43,6 @@ class SanaModelWrapper(torch.nn.Module):
+         if hasattr(self.model, "enable_gradient_checkpointing"):
+             self.model.enable_gradient_checkpointing()
+ 
+-    def get_scheduler(self):
+-        return self.scheduler
+-
+     def _convert_flow_pred_to_x0(
+         self, flow_pred: torch.Tensor, xt: torch.Tensor, timestep: torch.Tensor
+     ) -> torch.Tensor:
+@@ -138,15 +133,6 @@ class SanaModelWrapper(torch.nn.Module):
+         else:
+             kv_cache_ret = None
+ 
+-        # Compatible with diffusers output
+-        try:
+-            from diffusers.models.modeling_outputs import Transformer2DModelOutput
+-
+-            if isinstance(model_out, Transformer2DModelOutput):
+-                model_out = model_out[0]
+-        except Exception:
+-            pass
+-
+         if isinstance(model_out, Transformer2DModelOutput):
+             model_out = model_out[0]
+ 
+diff --git a/diffusion/model/act.py b/diffusion/model/act.py
+index 9df6a7a..e87fea6 100644
+--- a/diffusion/model/act.py
++++ b/diffusion/model/act.py
+@@ -15,6 +15,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ import copy
++from typing import Any
+ 
+ import torch.nn as nn
+ 
+@@ -22,7 +23,7 @@ __all__ = ["build_act", "get_act_name"]
+ 
+ # register activation function here
+ #   name: module, kwargs with default values
+-REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, any]]] = {
++REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, Any]]] = {
+     "relu": (nn.ReLU, {"inplace": True}),
+     "relu6": (nn.ReLU6, {"inplace": True}),
+     "hswish": (nn.Hardswish, {"inplace": True}),
+@@ -37,7 +38,7 @@ REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, any]]] = {
+ }
+ 
+ 
+-def build_act(name: str or None, **kwargs) -> nn.Module or None:
++def build_act(name: str | None, **kwargs: Any) -> nn.Module | None:
+     if name in REGISTERED_ACT_DICT:
+         act_cls, default_args = copy.deepcopy(REGISTERED_ACT_DICT[name])
+         for key in default_args:
+@@ -50,7 +51,7 @@ def build_act(name: str or None, **kwargs) -> nn.Module or None:
+         raise ValueError(f"do not support: {name}")
+ 
+ 
+-def get_act_name(act: nn.Module or None) -> str or None:
++def get_act_name(act: nn.Module | None) -> str | None:
+     if act is None:
+         return None
+     module2name = {}
+diff --git a/diffusion/model/builder.py b/diffusion/model/builder.py
+index 2463347..71a2595 100755
+--- a/diffusion/model/builder.py
++++ b/diffusion/model/builder.py
+@@ -19,7 +19,6 @@ import tempfile
+ 
+ import numpy as np
+ import torch
+-import torch.nn.functional as F
+ from diffusers import AutoencoderDC
+ from diffusers.models import AutoencoderKL
+ from diffusers.models.autoencoders import AutoencoderKLLTX2Video
+@@ -28,8 +27,6 @@ from termcolor import colored
+ from transformers import (
+     AutoModelForCausalLM,
+     AutoTokenizer,
+-    BitsAndBytesConfig,
+-    CLIPVisionModel,
+     SiglipImageProcessor,
+     SiglipVisionModel,
+     T5EncoderModel,
+@@ -347,7 +344,7 @@ def vae_decode(name, vae, latent):
+         scaling_factor = ae.config.scaling_factor if ae.config.scaling_factor else 0.41407
+         try:
+             samples = ae.decode(latent / scaling_factor, return_dict=False)[0]
+-        except torch.cuda.OutOfMemoryError as e:
++        except torch.cuda.OutOfMemoryError:
+             print("Warning: Ran out of memory when regular VAE decoding, retrying with tiled VAE decoding.")
+             ae.enable_tiling(tile_sample_min_height=1024, tile_sample_min_width=1024)
+             samples = ae.decode(latent / scaling_factor, return_dict=False)[0]
+diff --git a/diffusion/model/dc_ae/efficientvit/models/nn/triton_rms_norm.py b/diffusion/model/dc_ae/efficientvit/models/nn/triton_rms_norm.py
+index 6f559b5..53991bb 100644
+--- a/diffusion/model/dc_ae/efficientvit/models/nn/triton_rms_norm.py
++++ b/diffusion/model/dc_ae/efficientvit/models/nn/triton_rms_norm.py
+@@ -15,8 +15,53 @@
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:  # pragma: no cover - non-CUDA platforms (MPS, CPU)
++    HAS_TRITON = False
++
++    class _TritonStub:
++        @staticmethod
++        def jit(fn=None, **_kw):
++            if fn is None:
++                def _wrap(f):
++                    return f
++
++                return _wrap
++            return fn
++
++        @staticmethod
++        def next_power_of_2(n):
++            n = int(n)
++            p = 1
++            while p < n:
++                p <<= 1
++            return p
++
++        def __getattr__(self, name):
++            return _TritonStub()
++
++        def __call__(self, *a, **kw):
++            def _wrap(fn):
++                return fn
++
++            return _wrap
++
++    class _TLStub:
++        constexpr = int
++
++        def __getattr__(self, name):
++            return _TLStub()
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton = _TritonStub()  # type: ignore[assignment]
++    tl = _TLStub()  # type: ignore[assignment]
+ 
+ __all__ = ["TritonRMSNorm2dFunc"]
+ 
+diff --git a/diffusion/model/dpm_solver.py b/diffusion/model/dpm_solver.py
+index ea33085..a7b2dd4 100755
+--- a/diffusion/model/dpm_solver.py
++++ b/diffusion/model/dpm_solver.py
+@@ -587,7 +587,6 @@ def model_wrapper(
+                 c_in = torch.cat([unconditional_condition, condition])
+ 
+                 output = data_pred_fn(x_in, t_in, cond=c_in)
+-                model_output = output["model_output"]
+                 try:
+                     x0_uncond, x0 = output["x0"].chunk(2)
+                 except:
+@@ -618,7 +617,6 @@ def model_wrapper(
+             if model_kwargs.get("mask", None) is not None:
+                 mask = model_kwargs["mask"]
+                 if mask.shape[0] == x.shape[0] * 2:
+-                    negative_mask = mask[: x.shape[0]]
+                     model_kwargs["mask"] = mask[x.shape[0] :]
+             try:
+                 noise_perturb = noise_pred_fn(x, t_continuous, cond=condition[None])
+@@ -867,19 +865,17 @@ class DPM_Solver:
+             # Second half: quadratic
+             second_half_steps = (N + 1) - (N + 1) // 2
+             if second_half_steps > 0:
+-                start = linear_full[(N + 1) // 2].item()  # Current position value
+-                end = 0  # Target endpoint
++                start = linear_full[(N + 1) // 2].item()
+                 quadratic_indices = torch.arange(1, second_half_steps + 1, dtype=torch.float32)
+                 quadratic_spacing = (quadratic_indices**2) / (second_half_steps**2)
+-                # Decrease from start to end using quadratic spacing
++                # Decrease from `start` to 0 using quadratic spacing
+                 second_half = start - quadratic_spacing * start
+                 schedule = torch.cat([first_half, second_half])
+             else:
+                 schedule = first_half
+ 
+-            # Map from [1,0] to [0.999, 0] to match time_uniform_flow range
+-            # Approximate the range of time_uniform_flow
+-            max_val = 1.0 - t_0  # ≈ 0.999 when t_0 = 0.001
++            # Map [1,0] to [1 - t_0, 0] to align with time_uniform_flow range
++            max_val = 1.0 - t_0
+             min_val = 0.0
+             t = schedule * max_val + (1 - schedule) * min_val
+             return t.to(device)
+@@ -1000,7 +996,6 @@ class DPM_Solver:
+         ns = self.noise_schedule
+         t = expand_dims(t, x.ndim - t.ndim + 1)
+         s = expand_dims(s, x.ndim - s.ndim + 1)
+-        dims = x.dim()
+         lambda_s, lambda_t = ns.marginal_lambda(s), ns.marginal_lambda(t)
+         h = lambda_t - lambda_s
+         log_alpha_s, log_alpha_t = ns.marginal_log_mean_coeff(s), ns.marginal_log_mean_coeff(t)
+@@ -2100,19 +2095,17 @@ def linear_quadratic_schedule(N, total_steps=1000, t_start=1.0, t_end=0.001, dev
+     # Second half: quadratic
+     second_half_steps = (N + 1) - (N + 1) // 2
+     if second_half_steps > 0:
+-        start = linear_full[(N + 1) // 2].item()  # Current position value
+-        end = 0  # Target endpoint
++        start = linear_full[(N + 1) // 2].item()
+         quadratic_indices = torch.arange(1, second_half_steps + 1, dtype=torch.float32)
+         quadratic_spacing = (quadratic_indices**2) / (second_half_steps**2)
+-        # Decrease from start to end using quadratic spacing
++        # Decrease from `start` to 0 using quadratic spacing
+         second_half = start - quadratic_spacing * start
+         schedule = torch.cat([first_half, second_half])
+     else:
+         schedule = first_half
+ 
+-    # Map from [1,0] to [0.999, 0] to match time_uniform_flow range
+-    # Approximate the range of time_uniform_flow
+-    max_val = 1.0 - t_end  # ≈ 0.999 when t_end = 0.001
++    # Map [1,0] to [1 - t_end, 0] to align with time_uniform_flow range
++    max_val = 1.0 - t_end
+     min_val = 0.0
+     t = schedule * max_val + (1 - schedule) * min_val
+ 
+diff --git a/diffusion/model/model_growth_utils.py b/diffusion/model/model_growth_utils.py
+index 209a40e..52de723 100644
+--- a/diffusion/model/model_growth_utils.py
++++ b/diffusion/model/model_growth_utils.py
+@@ -146,37 +146,29 @@ class ModelGrowthInitializer:
+ 
+         for i in range(self.target_layers):
+             src_layer_idx = i % self.pretrained_layers
+-            # check if it is a repeated layer
+             is_repeated = i >= self.pretrained_layers
+ 
+             for key in self.pretrained_state:
+                 if f"blocks.{src_layer_idx}." in key:
+                     new_key = key.replace(f"blocks.{src_layer_idx}.", f"blocks.{i}.")
+ 
+-                    # use zero-gate strategy for repeated layers
+                     if zero_gate and is_repeated:
+                         if "scale_shift_table" in new_key:
+-                            # set the entire scale_shift_table to 0
+                             self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                             self.logger.info(f"zero init entire scale_shift_table: {new_key}")
+                         elif "cross_attn.proj.weight" in new_key or "cross_attn.proj.bias" in new_key:
+-                            # set the output projection layer of cross attention to 0
+                             self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                             self.logger.info(f"zero init cross attn proj: {new_key}")
+                         elif "attn.proj.weight" in new_key or "attn.proj.bias" in new_key:
+-                            # set the output projection layer of self attention to 0
+                             self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                             self.logger.info(f"zero init self attn proj: {new_key}")
+                         elif "mlp.point_conv.conv.weight" in new_key or "mlp.point_conv.conv.bias" in new_key:
+-                            # set the last point_conv of mlp to 0
+                             self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                             self.logger.info(f"zero init mlp point conv: {new_key}")
+                         else:
+-                            # other params copy normally
+                             self.target_state[new_key] = self.pretrained_state[key]
+                             self.logger.info(f"copy transformer params: {key} -> {new_key}")
+                     else:
+-                        # the first appearing layer or not using zero_gate
+                         self.target_state[new_key] = self.pretrained_state[key]
+                         self.logger.info(f"copy transformer params: {key} -> {new_key}")
+ 
+@@ -249,14 +241,11 @@ class ModelGrowthInitializer:
+                     new_key = key.replace(f"blocks.{i}.", f"blocks.{i}.")
+                     self.target_state[new_key] = self.pretrained_state[key]
+ 
+-        # iterate new layers
+         for i in range(self.pretrained_layers, self.target_layers):
+             self.logger.info(f"*********init new layer {i}")
+-            # iterate all params in the current layer
+             for key in self.target_state:
+-                # only process the params in the current layer
+                 if f"blocks.{i}." in key:
+-                    # initialize specific weight params (cross attention, self attention, point-wise conv) to 0
++                    # zero-init residual-output weights (attn proj, mlp point_conv)
+                     if any(
+                         x in key for x in ["cross_attn.proj.weight", "attn.proj.weight", "mlp.point_conv.conv.weight"]
+                     ):
+@@ -272,7 +261,6 @@ class ModelGrowthInitializer:
+                         self.target_state[key] = torch.zeros_like(self.target_state[key])
+                     elif "mlp.depth_conv.conv.weight" in key or "mlp.depth_conv.conv.bias" in key:
+                         self.target_state[key] = torch.randn_like(self.target_state[key]) * 0.2
+-                    # initialize other params with smaller std (0.02)
+                     else:
+                         self.target_state[key] = torch.randn_like(self.target_state[key]) * scale_others  # *0.02
+ 
+@@ -313,12 +301,9 @@ class ModelGrowthInitializer:
+ 
+         self._copy_non_transformer_params()
+ 
+-        # expand each layer
+         for src_layer_idx in range(self.pretrained_layers):
+-            # calculate the start index of the target model
+             target_start_idx = src_layer_idx * expand_ratio
+ 
+-            # copy the params of the source layer to the continuous expand_ratio layers
+             for offset in range(expand_ratio):
+                 target_layer_idx = target_start_idx + offset
+ 
+@@ -326,30 +311,24 @@ class ModelGrowthInitializer:
+                     if f"blocks.{src_layer_idx}." in key:
+                         new_key = key.replace(f"blocks.{src_layer_idx}.", f"blocks.{target_layer_idx}.")
+ 
+-                        # only set zero-gate for the subsequent layers in the expanded group (offset > 0)
++                        # offset==0 is the "original" copy of this src layer; siblings get zero-gated
+                         if zero_gate and offset > 0:
+                             if "scale_shift_table" in new_key:
+-                                # set the entire scale_shift_table to 0
+                                 self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                                 self.logger.info(f"zero init entire scale_shift_table: {new_key}")
+                             elif "cross_attn.proj.weight" in new_key or "cross_attn.proj.bias" in new_key:
+-                                # set the output projection layer of cross attention to 0
+                                 self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                                 self.logger.info(f"zero init cross attn proj: {new_key}")
+                             elif "attn.proj.weight" in new_key or "attn.proj.bias" in new_key:
+-                                # set the output projection layer of self attention to 0
+                                 self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                                 self.logger.info(f"zero init self attn proj: {new_key}")
+                             elif "mlp.point_conv.conv.weight" in new_key or "mlp.point_conv.conv.bias" in new_key:
+-                                # set the last point_conv of mlp to 0
+                                 self.target_state[new_key] = torch.zeros_like(self.pretrained_state[key])
+                                 self.logger.info(f"zero init mlp point conv: {new_key}")
+                             else:
+-                                # other params copy normally
+                                 self.target_state[new_key] = self.pretrained_state[key]
+                                 self.logger.info(f"copy transformer params: {key} -> {new_key}")
+                         else:
+-                            # original layer or not using zero_gate
+                             self.target_state[new_key] = self.pretrained_state[key]
+                             self.logger.info(f"copy transformer params: {key} -> {new_key}")
+ 
+diff --git a/diffusion/model/nets/__init__.py b/diffusion/model/nets/__init__.py
+index d2c74cd..00f5e81 100755
+--- a/diffusion/model/nets/__init__.py
++++ b/diffusion/model/nets/__init__.py
+@@ -65,3 +65,52 @@ try:
+     )
+ except ImportError:
+     pass
++
++__all__ = [
++    "Sana",
++    "SanaBlock",
++    "SanaMS",
++    "SanaMS_600M_P1_D28",
++    "SanaMS_600M_P2_D28",
++    "SanaMS_600M_P4_D28",
++    "SanaMS_1600M_P1_D20",
++    "SanaMS_1600M_P2_D20",
++    "SanaMSBlock",
++    "SanaMSAdaLN",
++    "SanaMSAdaLN_600M_P1_D28",
++    "SanaMSAdaLN_600M_P2_D28",
++    "SanaMSAdaLN_600M_P4_D28",
++    "SanaMSAdaLN_1600M_P1_D20",
++    "SanaMSAdaLN_1600M_P2_D20",
++    "SanaMSAdaLNBlock",
++    "SanaMSControlNet_600M_P1_D28",
++    "SanaMSVideo",
++    "SanaMSVideo_600M_P1_D28",
++    "SanaMSVideo_600M_P2_D28",
++    "SanaMSVideo_2000M_P1_D20",
++    "SanaMSVideo_2000M_P2_D20",
++    "SanaU",
++    "SanaU_600M_P1_D28",
++    "SanaU_600M_P2_D28",
++    "SanaU_600M_P4_D28",
++    "SanaU_1600M_P1_D20",
++    "SanaU_1600M_P2_D20",
++    "SanaUBlock",
++    "SanaUMS",
++    "SanaUMS_600M_P1_D28",
++    "SanaUMS_600M_P2_D28",
++    "SanaUMS_600M_P4_D28",
++    "SanaUMS_1600M_P1_D20",
++    "SanaUMS_1600M_P2_D20",
++    "SanaUMSBlock",
++    "get_1d_sincos_pos_embed_from_grid",
++    "get_2d_sincos_pos_embed",
++    "get_2d_sincos_pos_embed_from_grid",
++    # Conditional (requires the WM extras — Triton, FLA, etc.):
++    "SanaMSVideoCamCtrl",
++    "SanaMSVideoCamCtrl_600M_P1_D28",
++    "SanaMSVideoCamCtrl_600M_P2_D28",
++    "SanaMSVideoCamCtrl_1600M_P1_D20",
++    "SanaMSVideoCamCtrl_1600M_P2_D20",
++    "SanaMSVideoCamCtrl_1600M_P2S1_D20",
++]
+diff --git a/diffusion/model/nets/_triton_stub.py b/diffusion/model/nets/_triton_stub.py
+new file mode 100644
+index 0000000..4045e19
+--- /dev/null
++++ b/diffusion/model/nets/_triton_stub.py
+@@ -0,0 +1,363 @@
++"""Sys-modules ``triton`` shim for CPU / Apple-Silicon (MPS) hosts.
++
++Several third-party deps (``fla``, ``dc_ae`` triton helpers, the Sana ``*_triton``
++companion modules) eagerly ``import triton`` at module load time. On platforms
++without a triton wheel (macOS / MPS / CPU-only), this would crash the entire
++import chain.
++
++This module provides ``install_triton_stub_if_missing`` which installs a no-op
++``triton`` / ``triton.language`` package into ``sys.modules``. Decorators
++(``@triton.jit``, ``@triton.autotune``) become no-ops; calling any kernel will
++either silently do nothing or fail later. The intent is that callers route
++around triton entirely via ``SANA_WM_FORCE_PURE_PYTORCH=1`` and
++``FLA_USE_PURE_PYTORCH=1``, so the kernels never execute.
++
++Idempotent — safe to call from multiple modules. Must run BEFORE any
++``import fla`` / ``import triton`` statement in the same process.
++"""
++
++from __future__ import annotations
++
++import sys
++import types
++
++
++def install_triton_stub_if_missing() -> bool:
++    """Inject a no-op triton shim into ``sys.modules`` if triton is unavailable.
++
++    Returns ``True`` if the stub was installed, ``False`` if real triton was
++    already available (or the stub was already installed).
++    """
++    if "triton" in sys.modules:
++        return False
++    try:
++        import triton  # noqa: F401
++
++        return False
++    except ImportError:
++        pass
++
++    def _decorator_noop(fn=None, **_kw):
++        if fn is None:
++            def _wrap(f):
++                return f
++
++            return _wrap
++        return fn
++
++    def _next_power_of_2(n):
++        n = int(n)
++        p = 1
++        while p < n:
++            p <<= 1
++        return p
++
++    def _cdiv(a, b):
++        return -(-int(a) // int(b))
++
++    class _ConfigStub:
++        def __init__(self, *_a, **_kw):
++            pass
++
++    class _JITFunctionStub:
++        pass
++
++    class _Anything2:
++        def __init__(self, *_a, **_kw):
++            pass
++
++        def __class_getitem__(cls, item):
++            return cls
++
++        def __getattr__(self, name):
++            return _Anything2
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton_mod = types.ModuleType("triton")
++    triton_mod.__version__ = "0.0.0+stub"
++
++    def _triton_getattr(name):
++        if name.startswith("__") and name.endswith("__"):
++            raise AttributeError(name)
++        return _Anything2
++
++    triton_mod.__getattr__ = _triton_getattr  # type: ignore[attr-defined]
++    triton_mod.jit = _decorator_noop
++    triton_mod.autotune = lambda *_a, **_kw: (lambda fn: fn)
++    triton_mod.heuristics = lambda *_a, **_kw: (lambda fn: fn)
++    triton_mod.next_power_of_2 = _next_power_of_2
++    triton_mod.cdiv = _cdiv
++    triton_mod.Config = _ConfigStub
++    triton_mod.JITFunction = _JITFunctionStub
++
++    # Catch-all: every triton.language.<name> resolves to a no-op so unknown
++    # attribute lookups (e.g. ``tl.dtype``, ``tl.tensor``) don't crash torch's
++    # inductor module-level type annotations.
++    class _Anything:
++        def __init__(self, *_a, **_kw):
++            pass
++
++        def __class_getitem__(cls, item):
++            return cls
++
++        def __getattr__(self, name):
++            return _Anything
++
++        def __call__(self, *a, **kw):
++            return None
++
++    lang_mod = types.ModuleType("triton.language")
++
++    def _lang_getattr(name):
++        if name.startswith("__") and name.endswith("__"):
++            raise AttributeError(name)
++        return _Anything
++
++    lang_mod.__getattr__ = _lang_getattr  # type: ignore[attr-defined]
++
++    class _Constexpr:
++        """Stand-in for ``tl.constexpr`` — works as both an annotation and a
++        wrapper. ``tl.constexpr(value)`` returns the value unchanged."""
++
++        def __init__(self, value=None):
++            self.value = value
++
++        def __class_getitem__(cls, item):
++            return cls
++
++        def __new__(cls, value=None):
++            if value is None:
++                return object.__new__(cls)
++            return value  # passthrough wrap
++
++    lang_mod.constexpr = _Constexpr
++    lang_mod.float32 = "float32"
++    lang_mod.float16 = "float16"
++    lang_mod.bfloat16 = "bfloat16"
++    lang_mod.int32 = "int32"
++    lang_mod.int64 = "int64"
++
++    def _noop(*_a, **_kw):
++        return None
++
++    for name in (
++        "program_id",
++        "load",
++        "store",
++        "arange",
++        "zeros",
++        "dot",
++        "where",
++        "exp",
++        "log",
++        "sqrt",
++        "rsqrt",
++        "sigmoid",
++        "tanh",
++        "abs",
++        "floor",
++        "ceil",
++        "trans",
++        "minimum",
++        "maximum",
++        "sum",
++        "max",
++        "min",
++        "advance",
++        "make_block_ptr",
++        "atomic_add",
++        "atomic_max",
++        "static_assert",
++        "static_print",
++        "debug_barrier",
++        "tensor",
++        "device_print",
++        "broadcast_to",
++        "cdiv",
++        "full",
++        "view",
++        "reshape",
++        "cast",
++    ):
++        setattr(lang_mod, name, _noop)
++    triton_mod.language = lang_mod
++
++    # Mark triton / triton.language / triton.runtime as packages so attribute
++    # access like ``triton.language.extra.libdevice`` works.
++    triton_mod.__path__ = []  # type: ignore[attr-defined]
++    lang_mod.__path__ = []  # type: ignore[attr-defined]
++
++    # triton.language.extra.{libdevice, cuda.libdevice}
++    extra_mod = types.ModuleType("triton.language.extra")
++    extra_mod.__path__ = []  # type: ignore[attr-defined]
++    libdevice_mod = types.ModuleType("triton.language.extra.libdevice")
++    for name in ("exp", "log", "log2", "exp2", "rsqrt", "sqrt", "tanh", "sigmoid",
++                 "pow", "fast_expf", "fast_logf", "rcp", "floor", "ceil"):
++        setattr(libdevice_mod, name, _noop)
++    extra_mod.libdevice = libdevice_mod
++    extra_cuda_mod = types.ModuleType("triton.language.extra.cuda")
++    extra_cuda_mod.__path__ = []  # type: ignore[attr-defined]
++    extra_cuda_libdevice_mod = types.ModuleType("triton.language.extra.cuda.libdevice")
++    for name in ("exp", "log", "log2", "exp2", "rsqrt", "sqrt", "tanh", "sigmoid",
++                 "pow", "fast_expf", "fast_logf", "rcp", "floor", "ceil"):
++        setattr(extra_cuda_libdevice_mod, name, _noop)
++    extra_cuda_mod.libdevice = extra_cuda_libdevice_mod
++    extra_mod.cuda = extra_cuda_mod
++    lang_mod.extra = extra_mod
++    # triton.language.math
++    math_mod = types.ModuleType("triton.language.math")
++    for name in ("exp", "log", "log2", "exp2", "rsqrt", "sqrt", "tanh", "sigmoid", "pow"):
++        setattr(math_mod, name, _noop)
++    lang_mod.math = math_mod
++
++    # triton.runtime / triton.runtime.jit / triton.runtime.autotuner
++    runtime_mod = types.ModuleType("triton.runtime")
++    runtime_mod.__path__ = []  # type: ignore[attr-defined]
++    runtime_jit_mod = types.ModuleType("triton.runtime.jit")
++    runtime_jit_mod.JITFunction = _JITFunctionStub
++
++    class _KernelInterfaceStub:
++        def __init__(self, *_a, **_kw):
++            pass
++
++        def __getitem__(self, _key):
++            def _call(*_a, **_kw):
++                return None
++
++            return _call
++
++    runtime_jit_mod.KernelInterface = _KernelInterfaceStub
++    runtime_mod.jit = runtime_jit_mod
++
++    runtime_autotuner_mod = types.ModuleType("triton.runtime.autotuner")
++
++    class _OutOfResources(Exception):
++        pass
++
++    class _PTXASError(Exception):
++        pass
++
++    runtime_autotuner_mod.OutOfResources = _OutOfResources
++    runtime_autotuner_mod.PTXASError = _PTXASError
++    runtime_mod.autotuner = runtime_autotuner_mod
++
++    triton_mod.runtime = runtime_mod
++
++    # triton.compiler / triton.compiler.compiler
++    compiler_mod = types.ModuleType("triton.compiler")
++    compiler_mod.__path__ = []  # type: ignore[attr-defined]
++
++    class _CompiledKernel:
++        pass
++
++    compiler_mod.CompiledKernel = _CompiledKernel
++    compiler_compiler_mod = types.ModuleType("triton.compiler.compiler")
++
++    class _ASTSource:
++        pass
++
++    compiler_compiler_mod.ASTSource = _ASTSource
++
++    def _triton_key():
++        return "stub"
++
++    compiler_compiler_mod.triton_key = _triton_key
++    compiler_mod.compiler = compiler_compiler_mod
++    triton_mod.compiler = compiler_mod
++
++    # triton.language.standard._log2 and triton.language.core.view
++    lang_standard_mod = types.ModuleType("triton.language.standard")
++
++    def _stub_log2(x):
++        raise NotImplementedError
++
++    lang_standard_mod._log2 = _stub_log2
++    lang_mod.standard = lang_standard_mod
++    lang_core_mod = types.ModuleType("triton.language.core")
++    lang_core_mod.view = _noop
++    lang_mod.core = lang_core_mod
++
++    # triton.knobs / triton.runtime.cache.triton_key / triton.runtime.errors.IntelGPUError
++    knobs_mod = types.ModuleType("triton.knobs")
++    triton_mod.knobs = knobs_mod
++    runtime_cache_mod = types.ModuleType("triton.runtime.cache")
++    runtime_cache_mod.triton_key = _triton_key
++    runtime_mod.cache = runtime_cache_mod
++    runtime_errors_mod = types.ModuleType("triton.runtime.errors")
++
++    class _IntelGPUError(Exception):
++        pass
++
++    runtime_errors_mod.IntelGPUError = _IntelGPUError
++    runtime_mod.errors = runtime_errors_mod
++
++    # triton.backends.compiler.GPUTarget
++    backends_mod = types.ModuleType("triton.backends")
++    backends_mod.__path__ = []  # type: ignore[attr-defined]
++    backends_compiler_mod = types.ModuleType("triton.backends.compiler")
++
++    def _GPUTarget(backend, arch, warp_size):
++        return (backend, arch, warp_size)
++
++    backends_compiler_mod.GPUTarget = _GPUTarget
++    backends_mod.compiler = backends_compiler_mod
++    triton_mod.backends = backends_mod
++
++    _all_stub_mods = [
++        triton_mod,
++        lang_mod,
++        extra_mod,
++        libdevice_mod,
++        extra_cuda_mod,
++        extra_cuda_libdevice_mod,
++        math_mod,
++        lang_standard_mod,
++        lang_core_mod,
++        runtime_mod,
++        runtime_jit_mod,
++        runtime_autotuner_mod,
++        runtime_cache_mod,
++        runtime_errors_mod,
++        knobs_mod,
++        compiler_mod,
++        compiler_compiler_mod,
++        backends_mod,
++        backends_compiler_mod,
++    ]
++
++    def _make_getattr(_mod_name):
++        def _getattr(name):
++            # Never fabricate dunder attributes — let AttributeError propagate
++            # so introspection tools (inspect.getfile, pickle, etc.) behave.
++            if name.startswith("__") and name.endswith("__"):
++                raise AttributeError(name)
++            return _Anything2
++
++        return _getattr
++
++    for _m in _all_stub_mods:
++        if not hasattr(_m, "__getattr__"):
++            _m.__getattr__ = _make_getattr(_m.__name__)  # type: ignore[attr-defined]
++
++    sys.modules["triton"] = triton_mod
++    sys.modules["triton.language"] = lang_mod
++    sys.modules["triton.language.extra"] = extra_mod
++    sys.modules["triton.language.extra.libdevice"] = libdevice_mod
++    sys.modules["triton.language.extra.cuda"] = extra_cuda_mod
++    sys.modules["triton.language.extra.cuda.libdevice"] = extra_cuda_libdevice_mod
++    sys.modules["triton.language.math"] = math_mod
++    sys.modules["triton.language.standard"] = lang_standard_mod
++    sys.modules["triton.language.core"] = lang_core_mod
++    sys.modules["triton.runtime"] = runtime_mod
++    sys.modules["triton.runtime.jit"] = runtime_jit_mod
++    sys.modules["triton.runtime.autotuner"] = runtime_autotuner_mod
++    sys.modules["triton.runtime.cache"] = runtime_cache_mod
++    sys.modules["triton.runtime.errors"] = runtime_errors_mod
++    sys.modules["triton.knobs"] = knobs_mod
++    sys.modules["triton.compiler"] = compiler_mod
++    sys.modules["triton.compiler.compiler"] = compiler_compiler_mod
++    sys.modules["triton.backends"] = backends_mod
++    sys.modules["triton.backends.compiler"] = backends_compiler_mod
++    return True
+diff --git a/diffusion/model/nets/basic_modules.py b/diffusion/model/nets/basic_modules.py
+index 67babc7..1867a15 100644
+--- a/diffusion/model/nets/basic_modules.py
++++ b/diffusion/model/nets/basic_modules.py
+@@ -35,7 +35,7 @@ class ConvLayer(nn.Module):
+         stride=1,
+         dilation=1,
+         groups=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         dropout=0.0,
+         conv_type="2d",
+@@ -104,7 +104,7 @@ class GLUMBConv(nn.Module):
+         out_feature=None,
+         kernel_size=3,
+         stride=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, None),
+         act=("silu", "silu", None),
+@@ -182,7 +182,7 @@ class GLUMBConvTemp(GLUMBConv):
+         out_feature=None,
+         kernel_size=3,
+         stride=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, None),
+         act=("silu", "silu", None),
+@@ -385,7 +385,7 @@ class MBConvPreGLU(nn.Module):
+         stride=1,
+         mid_dim=None,
+         expand=6,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, "ln2d"),
+         act=("silu", "silu", None),
+diff --git a/diffusion/model/nets/basic_modules_linear.py b/diffusion/model/nets/basic_modules_linear.py
+index 0d4ae36..6576fe4 100644
+--- a/diffusion/model/nets/basic_modules_linear.py
++++ b/diffusion/model/nets/basic_modules_linear.py
+@@ -22,10 +22,9 @@ The 1x1 Conv2d is mathematically equivalent to Linear layer.
+ 
+ import torch
+ import torch.nn as nn
+-from timm.models.vision_transformer import Mlp
+ 
+-from diffusion.model.act import build_act, get_act_name
+-from diffusion.model.norms import build_norm, get_norm_name
++from diffusion.model.act import build_act
++from diffusion.model.norms import build_norm
+ from diffusion.model.utils import get_same_padding, val2tuple
+ 
+ 
+@@ -69,7 +68,7 @@ class ConvLayer(nn.Module):
+         stride=1,
+         dilation=1,
+         groups=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         dropout=0.0,
+         conv_type="2d",
+@@ -152,7 +151,7 @@ class GLUMBConvLinear(nn.Module):
+         out_feature=None,
+         kernel_size=3,
+         stride=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, None),
+         act=("silu", "silu", None),
+@@ -250,7 +249,7 @@ class GLUMBConvLinearTemp(GLUMBConvLinear):
+         out_feature=None,
+         kernel_size=3,
+         stride=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, None),
+         act=("silu", "silu", None),
+diff --git a/diffusion/model/nets/fastlinear/develop_triton_ffn.py b/diffusion/model/nets/fastlinear/develop_triton_ffn.py
+index 9810efc..eb75ecf 100644
+--- a/diffusion/model/nets/fastlinear/develop_triton_ffn.py
++++ b/diffusion/model/nets/fastlinear/develop_triton_ffn.py
+@@ -26,7 +26,6 @@ from modules.utils.dtype import get_dtype_from_str
+ from modules.utils.export_onnx import export_onnx
+ from omegaconf import OmegaConf
+ from torch import nn
+-from torch.nn import functional as F
+ from torchprofile import profile_macs
+ 
+ 
+@@ -58,52 +57,6 @@ class DevelopTritonFFNConfig:
+     export_device: str = "cuda"
+ 
+ 
+-# def simulate_litemla(x: torch.Tensor, qkv_weight: torch.Tensor, proj_weight: torch.Tensor, proj_bias: torch.Tensor, num_heads: int, head_dim: int, eps: float, backward: bool):
+-#     B, N, C = x.shape
+-#     qkv = F.linear(x, qkv_weight).reshape(B, N, 3, C).permute(0, 2, 3, 1)
+-#     q, k, v = qkv.unbind(1) # B, 3, C, N --> B, C, N
+-
+-#     q = q.reshape(B, C // head_dim, head_dim, N)    # b, h, h_d, N
+-#     k = k.reshape(B, C // head_dim, head_dim, N).transpose(-1, -2)    # b, h, N, h_d
+-#     v = v.reshape(B, C // head_dim, head_dim, N)    # b, h, h_d, N
+-
+-#     q = F.relu(q)     # B, h, h_d, N
+-#     k = F.relu(k)
+-
+-#     q, k, v = q.float(), k.float(), v.float()
+-#     if backward:
+-#         k.retain_grad()
+-#         v.retain_grad()
+-#         q.retain_grad()
+-#     v_pad = F.pad(v, (0, 0, 0, 1), mode="constant", value=1)
+-#     vk = torch.matmul(v_pad, k)
+-#     if backward:
+-#         vk.retain_grad()
+-#     vk_q = torch.matmul(vk, q)
+-#     vk_q_numerator, vk_q_denominator = vk_q[:, :, :-1], vk_q[:, :, -1:]
+-#     if backward:
+-#         vk_q_numerator.retain_grad()
+-#         vk_q_denominator.retain_grad()
+-#     vk_q_divide = (vk_q_numerator / (vk_q_denominator + eps)).to(x.dtype)
+-
+-#     proj_input = vk_q_divide.view(B, C, N).permute(0, 2, 1)    # B, N, C
+-#     if backward:
+-#         proj_input.retain_grad()
+-#     y = F.linear(proj_input, proj_weight, proj_bias)
+-#     output_dict = {
+-#         "q": q,
+-#         "k": k,
+-#         "v": v,
+-#         "vk": vk,
+-#         "proj_input": proj_input,
+-#         "vk_q_numerator": vk_q_numerator,
+-#         "vk_q_denominator": vk_q_denominator,
+-#         "vk_q_divide": vk_q_divide,
+-#         "y": y,
+-#     }
+-#     return output_dict
+-
+-
+ def main():
+     torch.backends.cuda.matmul.allow_tf32 = True
+     torch.backends.cudnn.allow_tf32 = True
+diff --git a/diffusion/model/nets/fastlinear/modules/flash_attn.py b/diffusion/model/nets/fastlinear/modules/flash_attn.py
+index 080220e..4690cfe 100644
+--- a/diffusion/model/nets/fastlinear/modules/flash_attn.py
++++ b/diffusion/model/nets/fastlinear/modules/flash_attn.py
+@@ -17,7 +17,6 @@
+ import torch
+ from flash_attn import flash_attn_func
+ from torch import nn
+-from torch.nn import functional as F
+ 
+ 
+ class FlashAttention(nn.Module):
+diff --git a/diffusion/model/nets/fastlinear/modules/mb_conv_pre_glu.py b/diffusion/model/nets/fastlinear/modules/mb_conv_pre_glu.py
+index af71b02..da7423e 100644
+--- a/diffusion/model/nets/fastlinear/modules/mb_conv_pre_glu.py
++++ b/diffusion/model/nets/fastlinear/modules/mb_conv_pre_glu.py
+@@ -19,8 +19,8 @@ from torch import nn
+ 
+ from .nn.act import build_act, get_act_name
+ from .nn.conv import ConvLayer
+-from .nn.norm import build_norm, get_norm_name
+-from .utils.model import get_same_padding, val2tuple
++from .nn.norm import get_norm_name
++from .utils.model import val2tuple
+ 
+ 
+ class MBConvPreGLU(nn.Module):
+@@ -32,7 +32,7 @@ class MBConvPreGLU(nn.Module):
+         stride=1,
+         mid_dim=None,
+         expand=6,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, "ln2d"),
+         act=("silu", "silu", None),
+diff --git a/diffusion/model/nets/fastlinear/modules/nn/act.py b/diffusion/model/nets/fastlinear/modules/nn/act.py
+index 10b4658..e93e4b5 100644
+--- a/diffusion/model/nets/fastlinear/modules/nn/act.py
++++ b/diffusion/model/nets/fastlinear/modules/nn/act.py
+@@ -15,6 +15,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ import copy
++from typing import Any
+ 
+ import torch.nn as nn
+ 
+@@ -22,7 +23,7 @@ __all__ = ["build_act", "get_act_name"]
+ 
+ # register activation function here
+ #   name: module, kwargs with default values
+-REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, any]]] = {
++REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, Any]]] = {
+     "relu": (nn.ReLU, {"inplace": True}),
+     "relu6": (nn.ReLU6, {"inplace": True}),
+     "hswish": (nn.Hardswish, {"inplace": True}),
+@@ -37,7 +38,7 @@ REGISTERED_ACT_DICT: dict[str, tuple[type, dict[str, any]]] = {
+ }
+ 
+ 
+-def build_act(name: str or None, **kwargs) -> nn.Module or None:
++def build_act(name: str | None, **kwargs: Any) -> nn.Module | None:
+     if name in REGISTERED_ACT_DICT:
+         act_cls, default_args = copy.deepcopy(REGISTERED_ACT_DICT[name])
+         for key in default_args:
+@@ -50,7 +51,7 @@ def build_act(name: str or None, **kwargs) -> nn.Module or None:
+         raise ValueError(f"do not support: {name}")
+ 
+ 
+-def get_act_name(act: nn.Module or None) -> str or None:
++def get_act_name(act: nn.Module | None) -> str | None:
+     if act is None:
+         return None
+     module2name = {}
+diff --git a/diffusion/model/nets/fastlinear/modules/nn/conv.py b/diffusion/model/nets/fastlinear/modules/nn/conv.py
+index 93978bc..7c8cb2a 100644
+--- a/diffusion/model/nets/fastlinear/modules/nn/conv.py
++++ b/diffusion/model/nets/fastlinear/modules/nn/conv.py
+@@ -18,8 +18,8 @@ import torch
+ from torch import nn
+ 
+ from ..utils.model import get_same_padding
+-from .act import build_act, get_act_name
+-from .norm import build_norm, get_norm_name
++from .act import build_act
++from .norm import build_norm
+ 
+ 
+ class ConvLayer(nn.Module):
+@@ -31,7 +31,7 @@ class ConvLayer(nn.Module):
+         stride=1,
+         dilation=1,
+         groups=1,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         dropout=0.0,
+         norm="bn2d",
+diff --git a/diffusion/model/nets/fastlinear/modules/nn/norm.py b/diffusion/model/nets/fastlinear/modules/nn/norm.py
+index 2e6fb78..5238224 100644
+--- a/diffusion/model/nets/fastlinear/modules/nn/norm.py
++++ b/diffusion/model/nets/fastlinear/modules/nn/norm.py
+@@ -16,6 +16,7 @@
+ 
+ import copy
+ import warnings
++from typing import Any
+ 
+ import torch
+ import torch.nn as nn
+@@ -40,7 +41,7 @@ class LayerNorm2d(nn.LayerNorm):
+ 
+ # register normalization function here
+ #   name: module, kwargs with default values
+-REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, any]]] = {
++REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, Any]]] = {
+     "bn2d": (nn.BatchNorm2d, {"num_features": None, "eps": 1e-5, "momentum": 0.1, "affine": True}),
+     "syncbn": (nn.SyncBatchNorm, {"num_features": None, "eps": 1e-5, "momentum": 0.1, "affine": True}),
+     "ln": (nn.LayerNorm, {"normalized_shape": None, "eps": 1e-5, "elementwise_affine": True}),
+@@ -48,7 +49,7 @@ REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, any]]] = {
+ }
+ 
+ 
+-def build_norm(name="bn2d", num_features=None, affine=True, **kwargs) -> nn.Module or None:
++def build_norm(name: str | None = "bn2d", num_features: int | None = None, affine: bool = True, **kwargs: Any) -> nn.Module | None:
+     if name in ["ln", "ln2d"]:
+         kwargs["normalized_shape"] = num_features
+         kwargs["elementwise_affine"] = affine
+@@ -67,7 +68,7 @@ def build_norm(name="bn2d", num_features=None, affine=True, **kwargs) -> nn.Modu
+         raise ValueError("do not support: %s" % name)
+ 
+ 
+-def get_norm_name(norm: nn.Module or None) -> str or None:
++def get_norm_name(norm: nn.Module | None) -> str | None:
+     if norm is None:
+         return None
+     module2name = {}
+@@ -171,7 +172,7 @@ def remove_bn(model: nn.Module) -> None:
+             m.forward = lambda x: x
+ 
+ 
+-def set_norm_eps(model: nn.Module, eps: float or None = None, momentum: float or None = None) -> None:
++def set_norm_eps(model: nn.Module, eps: float | None = None, momentum: float | None = None) -> None:
+     for m in model.modules():
+         if isinstance(m, (nn.GroupNorm, nn.LayerNorm, _BatchNorm)):
+             if eps is not None:
+diff --git a/diffusion/model/nets/fastlinear/modules/triton_lite_mla.py b/diffusion/model/nets/fastlinear/modules/triton_lite_mla.py
+index 820172c..5195d49 100644
+--- a/diffusion/model/nets/fastlinear/modules/triton_lite_mla.py
++++ b/diffusion/model/nets/fastlinear/modules/triton_lite_mla.py
+@@ -21,7 +21,6 @@ from torch import nn
+ from torch.nn import functional as F
+ 
+ from .triton_lite_mla_kernels.linear_relu_fwd import linear_relu_fwd
+-from .triton_lite_mla_kernels.mm import matmul  # for autocast
+ from .triton_lite_mla_kernels.pad_vk_mm_fwd import pad_vk_mm_fwd
+ from .triton_lite_mla_kernels.proj_divide_bwd import proj_divide_bwd
+ from .triton_lite_mla_kernels.vk_mm_relu_bwd import vk_mm_relu_bwd
+diff --git a/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu.py b/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu.py
+index 8c8f024..49b98e5 100644
+--- a/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu.py
++++ b/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu.py
+@@ -19,10 +19,9 @@ from torch import nn
+ 
+ from .nn.act import build_act, get_act_name
+ from .nn.conv import ConvLayer
+-from .nn.norm import build_norm, get_norm_name
+-from .triton_mb_conv_pre_glu_kernels.depthwise_conv_fwd import depthwise_conv_fwd
++from .nn.norm import get_norm_name
+ from .triton_mb_conv_pre_glu_kernels.linear_glu_fwd import linear_glu_fwd
+-from .utils.model import get_same_padding, val2tuple
++from .utils.model import val2tuple
+ 
+ 
+ class TritonMBConvPreGLU(nn.Module):
+@@ -34,7 +33,7 @@ class TritonMBConvPreGLU(nn.Module):
+         stride=1,
+         mid_dim=None,
+         expand=6,
+-        padding: int or None = None,
++        padding: int | None = None,
+         use_bias=False,
+         norm=(None, None, "ln2d"),
+         act=("silu", "silu", None),
+diff --git a/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu_kernels/depthwise_conv_fwd.py b/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu_kernels/depthwise_conv_fwd.py
+index 492c16b..475c5ac 100644
+--- a/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu_kernels/depthwise_conv_fwd.py
++++ b/diffusion/model/nets/fastlinear/modules/triton_mb_conv_pre_glu_kernels/depthwise_conv_fwd.py
+@@ -188,8 +188,7 @@ def debug():
+         in_channels=512, out_channels=512, kernel_size=3, stride=1, padding=1, groups=512, device=device, dtype=dtype
+     )
+     x = torch.randn(16, 512, 32, 32, device=device, dtype=dtype).to(memory_format=torch.channels_last)
+-    # ref_y = conv(x)
+-    tri_y = depthwise_conv_fwd(x.permute(0, 2, 3, 1), conv.weight[:, 0], conv.bias).permute(0, 3, 1, 2)
++    _ = depthwise_conv_fwd(x.permute(0, 2, 3, 1), conv.weight[:, 0], conv.bias).permute(0, 3, 1, 2)
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/diffusion/model/nets/fastlinear/modules/utils/dtype.py b/diffusion/model/nets/fastlinear/modules/utils/dtype.py
+index 27e0640..9657378 100644
+--- a/diffusion/model/nets/fastlinear/modules/utils/dtype.py
++++ b/diffusion/model/nets/fastlinear/modules/utils/dtype.py
+@@ -15,7 +15,6 @@
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ import torch
+-import triton
+ import triton.language as tl
+ 
+ 
+diff --git a/diffusion/model/nets/fastlinear/modules/utils/model.py b/diffusion/model/nets/fastlinear/modules/utils/model.py
+index c2979d7..f391f94 100644
+--- a/diffusion/model/nets/fastlinear/modules/utils/model.py
++++ b/diffusion/model/nets/fastlinear/modules/utils/model.py
+@@ -14,15 +14,17 @@
+ #
+ # SPDX-License-Identifier: Apache-2.0
+ 
++from typing import Any
+ 
+-def val2list(x: list or tuple or any, repeat_time=1) -> list:  # type: ignore
++
++def val2list(x: list | tuple | Any, repeat_time: int = 1) -> list:
+     """Repeat `val` for `repeat_time` times and return the list or val if list/tuple."""
+     if isinstance(x, (list, tuple)):
+         return list(x)
+     return [x for _ in range(repeat_time)]
+ 
+ 
+-def val2tuple(x: list or tuple or any, min_len: int = 1, idx_repeat: int = -1) -> tuple:  # type: ignore
++def val2tuple(x: list | tuple | Any, min_len: int = 1, idx_repeat: int = -1) -> tuple:
+     """Return tuple with min_len by repeating element at idx_repeat."""
+     # convert to list first
+     x = val2list(x)
+@@ -34,7 +36,7 @@ def val2tuple(x: list or tuple or any, min_len: int = 1, idx_repeat: int = -1) -
+     return tuple(x)
+ 
+ 
+-def get_same_padding(kernel_size: int or tuple[int, ...]) -> int or tuple[int, ...]:
++def get_same_padding(kernel_size: int | tuple[int, ...]) -> int | tuple[int, ...]:
+     if isinstance(kernel_size, tuple):
+         return tuple([get_same_padding(ks) for ks in kernel_size])
+     else:
+diff --git a/diffusion/model/nets/sana.py b/diffusion/model/nets/sana.py
+index 1083366..4a8db59 100755
+--- a/diffusion/model/nets/sana.py
++++ b/diffusion/model/nets/sana.py
+@@ -24,7 +24,7 @@ from termcolor import colored
+ from timm.models.layers import DropPath
+ 
+ from diffusion.model.builder import MODELS
+-from diffusion.model.nets.basic_modules import DWMlp, GLUMBConv, MBConvPreGLU, Mlp
++from diffusion.model.nets.basic_modules import DWMlp, GLUMBConv, Mlp
+ from diffusion.model.nets.sana_blocks import (
+     Attention,
+     CaptionEmbedder,
+@@ -46,7 +46,7 @@ from diffusion.utils.logger import get_root_logger
+ 
+ _triton_modules_available = False
+ if is_triton_module_available():
+-    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA, TritonMBConvPreGLU
++    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA
+ 
+     _triton_modules_available = True
+ 
+diff --git a/diffusion/model/nets/sana_blocks.py b/diffusion/model/nets/sana_blocks.py
+index 1bc6bf2..3ee7700 100755
+--- a/diffusion/model/nets/sana_blocks.py
++++ b/diffusion/model/nets/sana_blocks.py
+@@ -45,6 +45,88 @@ def t2i_modulate(x, shift, scale):
+     return x * (1 + scale) + shift
+ 
+ 
++# -----------------------------------------------------------------------------
++# MPS-compatible RoPE: torch.view_as_complex is unsupported on MPS, so we
++# provide a real-math equivalent. Original complex path is preserved for
++# CUDA/CPU (bit-identical math via torch.view_as_complex).
++# -----------------------------------------------------------------------------
++_USE_REAL_ROPE = (
++    os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1"
++    or os.environ.get("SANA_WM_NO_COMPLEX_ROPE", "0") == "1"
++)
++
++
++def _rope_use_real(hidden_states: torch.Tensor) -> bool:
++    """Decide whether to use the real-valued RoPE path."""
++    return _USE_REAL_ROPE or hidden_states.device.type == "mps"
++
++
++def _apply_rotary_emb_real_perm(hidden_states: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
++    """Real-valued RoPE for tensors shaped (B, h, h_d, N).
++
++    Mirrors the original ``permute(0,1,3,2) -> view_as_complex -> *freqs -> view_as_real
++    -> flatten(3,4) -> permute(0,1,3,2)`` pipeline using cos/sin math.
++    """
++    x = hidden_states.permute(0, 1, 3, 2).to(torch.float32).unflatten(3, (-1, 2))
++    x_re = x[..., 0]
++    x_im = x[..., 1]
++    if freqs.is_complex():
++        f_cos = freqs.real.to(x_re.dtype)
++        f_sin = freqs.imag.to(x_re.dtype)
++    else:
++        f_cos = freqs[..., 0].to(x_re.dtype)
++        f_sin = freqs[..., 1].to(x_re.dtype)
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(3, 4).permute(0, 1, 3, 2)
++    return out.type_as(hidden_states)
++
++
++def _apply_rotary_emb_real_transpose(hidden_states: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
++    """Real-valued RoPE for tensors shaped (B, N, h, h_d).
++
++    Mirrors ``transpose(1,2) -> view_as_complex -> *freqs -> view_as_real
++    -> flatten(3,4) -> transpose(1,2)`` pipeline.
++    """
++    x = hidden_states.transpose(1, 2).to(torch.float32).unflatten(3, (-1, 2))
++    x_re = x[..., 0]
++    x_im = x[..., 1]
++    if freqs.is_complex():
++        f_cos = freqs.real.to(x_re.dtype)
++        f_sin = freqs.imag.to(x_re.dtype)
++    else:
++        f_cos = freqs[..., 0].to(x_re.dtype)
++        f_sin = freqs[..., 1].to(x_re.dtype)
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(3, 4).transpose(1, 2)
++    return out.type_as(hidden_states)
++
++
++def _apply_rotary_emb_real_lumina(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
++    """Real-valued RoPE for the lumina-style path (line ~1580).
++
++    Mirrors:
++        x_rotated = view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
++        freqs_cis = freqs_cis.unsqueeze(2)
++        x_out = view_as_real(x_rotated * freqs_cis).flatten(3)
++    """
++    x_pairs = x.float().reshape(*x.shape[:-1], -1, 2)
++    x_re = x_pairs[..., 0]
++    x_im = x_pairs[..., 1]
++    f = freqs_cis.unsqueeze(2)
++    if f.is_complex():
++        f_cos = f.real.to(x_re.dtype)
++        f_sin = f.imag.to(x_re.dtype)
++    else:
++        f_cos = f[..., 0].to(x_re.dtype)
++        f_sin = f[..., 1].to(x_re.dtype)
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(3)
++    return out.type_as(x)
++
++
+ class MultiHeadCrossAttention(nn.Module):
+     def __init__(self, d_model, num_heads, attn_drop=0.0, proj_drop=0.0, qk_norm=False, **block_kwargs):
+         super().__init__()
+@@ -91,7 +173,8 @@ class MultiHeadCrossAttention(nn.Module):
+             x = F.scaled_dot_product_attention(q, k, v, attn_mask=mask, dropout_p=0.0, is_causal=False)
+             x = x.transpose(1, 2)
+ 
+-        x = x.view(B, -1, C)
++        # Use reshape instead of view; MPS returns non-contiguous tensors here.
++        x = x.reshape(B, -1, C)
+         x = self.proj(x)
+         x = self.proj_drop(x)
+ 
+@@ -357,6 +440,8 @@ class LiteLAReLURope(Attention_):
+         k = self.kernel_func(k)
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_perm(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.permute(0, 1, 3, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).permute(0, 1, 3, 2)
+             return x_out.type_as(hidden_states)
+@@ -427,6 +512,8 @@ class ChunkCausalAttention(LiteLAReLURope):
+         k = self.kernel_func(k)
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_perm(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.permute(0, 1, 3, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).permute(0, 1, 3, 2)
+             return x_out.type_as(hidden_states)
+@@ -530,6 +617,8 @@ class CachedCausalAttention(LiteLAReLURope):
+         k = self.kernel_func(k)
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_perm(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.permute(0, 1, 3, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).permute(0, 1, 3, 2)
+             return x_out.type_as(hidden_states)
+@@ -745,6 +834,8 @@ class SelfAttnProcessorLiteLAReLURope:
+         k = self.attn.kernel_func(k)
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_perm(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.permute(0, 1, 3, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).permute(0, 1, 3, 2)
+             return x_out.type_as(hidden_states)
+@@ -817,6 +908,8 @@ class FlashAttention(Attention_):
+             attn_bias.masked_fill_(mask.squeeze(1).repeat(self.num_heads, 1, 1) == 0, float("-inf"))
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_transpose(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.transpose(1, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).transpose(1, 2)
+             return x_out.type_as(hidden_states)
+@@ -1223,8 +1316,8 @@ class PatchEmbed(nn.Module):
+ 
+     def forward(self, x):
+         B, C, H, W = x.shape
+-        assert (H == self.img_size[0], f"Input image height ({H}) doesn't match model ({self.img_size[0]}).")
+-        assert (W == self.img_size[1], f"Input image width ({W}) doesn't match model ({self.img_size[1]}).")
++        assert H == self.img_size[0], f"Input image height ({H}) doesn't match model ({self.img_size[0]})."
++        assert W == self.img_size[1], f"Input image width ({W}) doesn't match model ({self.img_size[1]})."
+         x = self.proj(x)
+         if self.flatten:
+             x = x.flatten(2).transpose(1, 2)  # BCHW -> BNC
+@@ -1393,6 +1486,10 @@ class WanRotaryPosEmbed(nn.Module):
+     def forward(self, fhw: torch.Tensor, device: torch.device) -> torch.Tensor:
+         ppf, pph, ppw = fhw
+ 
++        # MPS doesn't support float64; downcast complex128 -> complex64 on MPS.
++        if device.type == "mps" and self.freqs.dtype in (torch.complex128, torch.float64):
++            target_dtype = torch.complex64 if self.freqs.is_complex() else torch.float32
++            self.freqs = self.freqs.to(target_dtype)
+         self.freqs = self.freqs.to(device)
+         freqs = self.freqs.split_with_sizes(
+             [
+@@ -1454,6 +1551,10 @@ class WanRotaryTemporalPosEmbed(nn.Module):
+     def forward(self, fhw: torch.Tensor, device: torch.device) -> torch.Tensor:
+         ppf, pph, ppw = fhw
+ 
++        # MPS doesn't support float64; downcast complex128 -> complex64 on MPS.
++        if device.type == "mps" and self.freqs.dtype in (torch.complex128, torch.float64):
++            target_dtype = torch.complex64 if self.freqs.is_complex() else torch.float32
++            self.freqs = self.freqs.to(target_dtype)
+         self.freqs = self.freqs.to(device)
+         freqs = self.freqs.split_with_sizes(
+             [
+@@ -1577,6 +1678,8 @@ def apply_rotary_emb(
+         return out
+     else:
+         # used for lumina
++        if _USE_REAL_ROPE or x.device.type == "mps":
++            return _apply_rotary_emb_real_lumina(x, freqs_cis)
+         x_rotated = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+         freqs_cis = freqs_cis.unsqueeze(2)
+         x_out = torch.view_as_real(x_rotated * freqs_cis).flatten(3)
+@@ -1665,6 +1768,8 @@ class WindowAttention(FlashAttention):
+ 
+         # 3. apply RoPE
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_transpose(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.transpose(1, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).transpose(1, 2)
+             return x_out.type_as(hidden_states)
+@@ -1806,6 +1911,8 @@ class ChunkedLiteLAReLURope(LiteLAReLURope):
+         k = self.kernel_func(k)
+ 
+         def apply_rotary_emb(hidden_states: torch.Tensor, freqs: torch.Tensor):
++            if _rope_use_real(hidden_states):
++                return _apply_rotary_emb_real_perm(hidden_states, freqs)
+             x_rotated = torch.view_as_complex(hidden_states.permute(0, 1, 3, 2).to(torch.float64).unflatten(3, (-1, 2)))
+             x_out = torch.view_as_real(x_rotated * freqs).flatten(3, 4).permute(0, 1, 3, 2)
+             return x_out.type_as(hidden_states)
+diff --git a/diffusion/model/nets/sana_camctrl_blocks.py b/diffusion/model/nets/sana_camctrl_blocks.py
+index 5f04b80..e04dcf8 100644
+--- a/diffusion/model/nets/sana_camctrl_blocks.py
++++ b/diffusion/model/nets/sana_camctrl_blocks.py
+@@ -488,8 +488,41 @@ def _apply_tiled_projmat(
+     ).reshape(feats.shape)
+ 
+ 
++_USE_REAL_ROPE_CAMCTRL = (
++    os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1"
++    or os.environ.get("SANA_WM_NO_COMPLEX_ROPE", "0") == "1"
++)
++
++
++def _apply_complex_rope_real(
++    hidden_states: torch.Tensor,
++    freqs: torch.Tensor,
++    inverse: bool = False,
++) -> torch.Tensor:
++    """Real-valued RoPE that avoids torch.view_as_complex (MPS-compatible)."""
++    x = hidden_states.to(torch.float32)
++    if x.stride(-1) != 1:
++        x = x.contiguous()
++    x = x.unflatten(-1, (-1, 2))
++    x_re = x[..., 0]
++    x_im = x[..., 1]
++    if freqs.is_complex():
++        f_cos = freqs.real.to(x_re.dtype)
++        f_sin = freqs.imag.to(x_re.dtype)
++    else:
++        f_cos = freqs[..., 0].to(x_re.dtype)
++        f_sin = freqs[..., 1].to(x_re.dtype)
++    if inverse:
++        # conjugate: flip sign of imag part
++        f_sin = -f_sin
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(-2, -1)
++    return out.type_as(hidden_states)
++
++
+ @torch.compile(disable=_COMPILE_DISABLE)
+-def _apply_complex_rope(
++def _apply_complex_rope_native(
+     hidden_states: torch.Tensor,
+     freqs: torch.Tensor,
+     inverse: bool = False,
+@@ -505,6 +538,16 @@ def _apply_complex_rope(
+     return x_out.type_as(hidden_states)
+ 
+ 
++def _apply_complex_rope(
++    hidden_states: torch.Tensor,
++    freqs: torch.Tensor,
++    inverse: bool = False,
++) -> torch.Tensor:
++    if _USE_REAL_ROPE_CAMCTRL or hidden_states.device.type == "mps":
++        return _apply_complex_rope_real(hidden_states, freqs, inverse=inverse)
++    return _apply_complex_rope_native(hidden_states, freqs, inverse=inverse)
++
++
+ def _apply_block_diagonal(
+     feats: torch.Tensor,  # (..., dim)
+     func_size_pairs: List[Tuple[Callable[[torch.Tensor], torch.Tensor], int]],
+diff --git a/diffusion/model/nets/sana_gdn_blocks.py b/diffusion/model/nets/sana_gdn_blocks.py
+index 2eaf490..9702e33 100644
+--- a/diffusion/model/nets/sana_gdn_blocks.py
++++ b/diffusion/model/nets/sana_gdn_blocks.py
+@@ -5,22 +5,23 @@ from __future__ import annotations
+ import math
+ import os
+ 
++# Install the triton stub (if needed) BEFORE importing fla. ``fla`` eagerly
++# imports triton at module level, which would crash on CPU / MPS hosts.
++from diffusion.model.nets._triton_stub import install_triton_stub_if_missing
++
++install_triton_stub_if_missing()
++
+ import torch
+ import torch.distributed as dist
+ import torch.nn as nn
+ import torch.nn.functional as F
+-from einops import rearrange
+ from fla.modules import ShortConvolution
+ from timm.models.vision_transformer import Attention as Attention_
+ 
+ from diffusion.distributed.context_parallel.config import cp_enabled, get_cp_group
+ from diffusion.model.liger_norms import get_rmsnorm_class
+ from diffusion.utils.chunk_utils import (
+-    chunk_index_from_chunk_size,
+-    is_chunk_causal_request,
+-    is_uniform_chunking,
+     normalize_chunk_index,
+-    size1_chunk_position_indices,
+ )
+ 
+ RMSNorm = get_rmsnorm_class()
+@@ -184,7 +185,7 @@ def torch_recurrent_sana_gdn(q, k, v, q_rot, k_rot, beta, decay, recall_gate, ep
+     return final_num / (final_den + eps)
+ 
+ 
+-@torch.compile
++@torch.compile(disable=os.environ.get("GDN_DISABLE_COMPILE", "0") == "1")
+ def torch_chunk_sana_gdn(
+     q,
+     k,
+@@ -332,8 +333,41 @@ def _compute_frame_gates(
+     return beta, decay
+ 
+ 
++_USE_REAL_ROPE = (
++    os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1"
++    or os.environ.get("SANA_WM_NO_COMPLEX_ROPE", "0") == "1"
++)
++
++
++def _apply_rotary_emb_real(
++    hidden_states: torch.Tensor,
++    freqs: torch.Tensor,
++) -> torch.Tensor:
++    """Real-valued RoPE that avoids torch.view_as_complex (MPS-compatible).
++
++    Treats the last dimension as interleaved (re, im, re, im, ...) pairs and
++    multiplies by ``freqs = cos + i*sin`` using cos/sin derived from freqs.real
++    and freqs.imag.
++    """
++    x = hidden_states.permute(0, 1, 3, 2).to(torch.float32).unflatten(3, (-1, 2))
++    # x has shape (..., n_pairs, 2): index 0 is re, index 1 is im
++    x_re = x[..., 0]
++    x_im = x[..., 1]
++    if freqs.is_complex():
++        f_cos = freqs.real.to(x_re.dtype)
++        f_sin = freqs.imag.to(x_re.dtype)
++    else:
++        # Already split: assume (cos, sin) interleaved on last dim
++        f_cos = freqs[..., 0].to(x_re.dtype)
++        f_sin = freqs[..., 1].to(x_re.dtype)
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(3, 4).permute(0, 1, 3, 2)
++    return out.type_as(hidden_states)
++
++
+ @torch.compile(disable=_COMPILE_DISABLE)
+-def _apply_rotary_emb(
++def _apply_rotary_emb_complex(
+     hidden_states: torch.Tensor,
+     freqs: torch.Tensor,
+ ) -> torch.Tensor:
+@@ -345,6 +379,15 @@ def _apply_rotary_emb(
+     return x_out.type_as(hidden_states)
+ 
+ 
++def _apply_rotary_emb(
++    hidden_states: torch.Tensor,
++    freqs: torch.Tensor,
++) -> torch.Tensor:
++    if _USE_REAL_ROPE or hidden_states.device.type == "mps":
++        return _apply_rotary_emb_real(hidden_states, freqs)
++    return _apply_rotary_emb_complex(hidden_states, freqs)
++
++
+ @torch.compile(disable=_COMPILE_DISABLE)
+ def _apply_output_gate(
+     out: torch.Tensor,
+@@ -441,6 +484,14 @@ class GDN(Attention_):
+ 
+         self.qkv_store_buffer = None
+ 
++        # MPS / CPU override: force pure-PyTorch RECURRENT path. The chunkwise
++        # variant has @torch.compile decorators and constructs
++        # (I - k_beta @ k_rot^T) per chunk, which produces blur on MPS — the
++        # line-by-line recurrent variant is the numerically-safe reference.
++        if os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1":
++            if update_rule_func.startswith("triton_") or update_rule_func == "torch_chunk_sana_gdn":
++                update_rule_func = "torch_recurrent_sana_gdn"
++
+         if update_rule_func == "torch_recurrent_sana_gdn":
+             self.update_rule_func = torch_recurrent_sana_gdn
+         elif update_rule_func == "torch_chunk_sana_gdn":
+diff --git a/diffusion/model/nets/sana_gdn_blocks_triton.py b/diffusion/model/nets/sana_gdn_blocks_triton.py
+index 510d89b..923628b 100644
+--- a/diffusion/model/nets/sana_gdn_blocks_triton.py
++++ b/diffusion/model/nets/sana_gdn_blocks_triton.py
+@@ -46,8 +46,6 @@ from diffusion.model.ops.fused_gdn import (
+ from diffusion.model.ops.fused_gdn_chunkwise import cam_scan_bidi_chunkwise
+ from diffusion.model.registry import ATTENTION_BLOCKS
+ from diffusion.utils.chunk_utils import (
+-    is_chunk_causal_request,
+-    normalize_chunk_index,
+     size1_chunk_position_indices,
+ )
+ 
+diff --git a/diffusion/model/nets/sana_gdn_camctrl_blocks.py b/diffusion/model/nets/sana_gdn_camctrl_blocks.py
+index 2eb22f7..5f796b4 100644
+--- a/diffusion/model/nets/sana_gdn_camctrl_blocks.py
++++ b/diffusion/model/nets/sana_gdn_camctrl_blocks.py
+@@ -23,13 +23,19 @@ from __future__ import annotations
+ import os
+ from copy import deepcopy
+ 
++# Install the triton stub (if needed) BEFORE importing fla. The function lives
++# in sana_gdn_blocks but the import order in this file means fla loads first.
++from diffusion.model.nets._triton_stub import install_triton_stub_if_missing
++
++install_triton_stub_if_missing()
++
+ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+ from fla.modules import ShortConvolution
+ 
+ from diffusion.distributed.context_parallel.config import cp_enabled, get_cp_group
+-from diffusion.utils.chunk_utils import is_chunk_causal_request, normalize_chunk_index
++from diffusion.utils.chunk_utils import normalize_chunk_index
+ 
+ from .sana_camctrl_blocks import _maybe_drop_cam_branch, prepare_prope_fns
+ from .sana_gdn_blocks import (
+@@ -355,6 +361,10 @@ class _GDNUCPEBase(GDN):
+         from functools import partial
+ 
+         chunk_gdn_chunk_size = kwargs.get("chunk_gdn_chunk_size", 21)
++        # MPS / CPU override: force recurrent variant (matches main-path override).
++        import os as _os
++        if _os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1" and cam_update_rule_func == "torch_chunk":
++            cam_update_rule_func = "torch_recurrent"
+         if cam_update_rule_func == "torch_recurrent":
+             self._cam_single_path_fn = torch_recurrent_cam_single_path_delta_rule
+         elif cam_update_rule_func == "torch_chunk":
+diff --git a/diffusion/model/nets/sana_multi_scale.py b/diffusion/model/nets/sana_multi_scale.py
+index feca487..c50a39e 100755
+--- a/diffusion/model/nets/sana_multi_scale.py
++++ b/diffusion/model/nets/sana_multi_scale.py
+@@ -42,13 +42,13 @@ from diffusion.utils.import_utils import is_triton_module_available, is_xformers
+ 
+ _triton_modules_available = False
+ if is_triton_module_available():
+-    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA, TritonMBConvPreGLU
++    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA
+ 
+     _triton_modules_available = True
+ 
+ _xformers_available = False if os.environ.get("DISABLE_XFORMERS", "0") == "1" else is_xformers_available()
+ if _xformers_available:
+-    import xformers.ops
++    pass
+ 
+ 
+ class SanaMSBlock(nn.Module):
+diff --git a/diffusion/model/nets/sana_multi_scale_controlnet.py b/diffusion/model/nets/sana_multi_scale_controlnet.py
+index 16e720f..dbeb0ea 100644
+--- a/diffusion/model/nets/sana_multi_scale_controlnet.py
++++ b/diffusion/model/nets/sana_multi_scale_controlnet.py
+@@ -30,7 +30,6 @@ from diffusion.utils.import_utils import is_triton_module_available, is_xformers
+ 
+ _triton_modules_available = False
+ if is_triton_module_available():
+-    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA, TritonMBConvPreGLU
+ 
+     _triton_modules_available = True
+ 
+diff --git a/diffusion/model/nets/sana_multi_scale_video.py b/diffusion/model/nets/sana_multi_scale_video.py
+index d2af994..53e8cef 100755
+--- a/diffusion/model/nets/sana_multi_scale_video.py
++++ b/diffusion/model/nets/sana_multi_scale_video.py
+@@ -54,13 +54,12 @@ from diffusion.utils.import_utils import is_triton_module_available, is_xformers
+ 
+ _triton_modules_available = False
+ if is_triton_module_available():
+-    from diffusion.model.nets.fastlinear.modules import TritonLiteMLA, TritonMBConvPreGLU
+ 
+     _triton_modules_available = True
+ 
+ _xformers_available = False if os.environ.get("DISABLE_XFORMERS", "0") == "1" else is_xformers_available()
+ if _xformers_available:
+-    import xformers.ops
++    pass
+ 
+ 
+ class SanaVideoMSBlock(nn.Module):
+diff --git a/diffusion/model/nets/sana_multi_scale_video_camctrl.py b/diffusion/model/nets/sana_multi_scale_video_camctrl.py
+index 27d5079..66c6d19 100755
+--- a/diffusion/model/nets/sana_multi_scale_video_camctrl.py
++++ b/diffusion/model/nets/sana_multi_scale_video_camctrl.py
+@@ -57,9 +57,49 @@ from .sana_gdn_blocks_triton import (
+     BidirectionalGDNUCPESinglePathLiteLABothTriton,
+ )
+ from .sana_gdn_camctrl_blocks import (
++    BidirectionalGDNUCPESinglePathLiteLA,
+     BidirectionalSoftmaxUCPESinglePathLiteLA,
+ )
+ 
++import os as _os
++import torch as _torch
++
++
++def _force_no_triton_block_type(name):
++    """When CUDA+Triton aren't usable (MPS or SANA_WM_FORCE_PURE_PYTORCH=1),
++    remap *Triton block-type names to their pure-PyTorch equivalents.
++
++    By default, the *BothTriton camctrl variant is remapped to the softmax
++    fallback (which is what the original MPS port used).  Set
++    ``SANA_WM_RESTORE_GDN=1`` to instead remap to the pure-PyTorch
++    ``BidirectionalGDNUCPESinglePathLiteLA`` -- this preserves the trained
++    15-GDN + 5-softmax hybrid topology when combined with ``softmax_every_n``.
++    """
++    force = (
++        _os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1"
++        or not _torch.cuda.is_available()
++    )
++    if not force or not isinstance(name, str):
++        return name
++    restore_gdn = _os.environ.get("SANA_WM_RESTORE_GDN", "0") == "1"
++    if restore_gdn:
++        remap = {
++            "BidirectionalGDNUCPESinglePathLiteLABothTriton":
++                "BidirectionalGDNUCPESinglePathLiteLA",
++            "BidirectionalGDNTriton": "BidirectionalGDN",
++        }
++    else:
++        remap = {
++            "BidirectionalGDNUCPESinglePathLiteLABothTriton":
++                "BidirectionalSoftmaxUCPESinglePathLiteLA",
++            "BidirectionalGDNTriton": "BidirectionalGDN",
++        }
++    new = remap.get(name, name)
++    if new != name:
++        print(f"[sana-wm:mps] remapping block type {name!r} -> {new!r}", flush=True)
++    return new
++
++
+ # xformers is OFF by default on this stack (see diffusion/model/nets/sana_blocks.py for rationale).
+ # Opt in with ENABLE_XFORMERS=1.
+ _xformers_available = (
+@@ -68,7 +108,7 @@ _xformers_available = (
+     and is_xformers_available()
+ )
+ if _xformers_available:
+-    import xformers.ops
++    pass
+ 
+ 
+ class DeltaActionEmbedder(nn.Module):
+@@ -166,6 +206,28 @@ class SanaVideoMSCamCtrlBlock(nn.Module):
+                 patch_size=patch_size,
+                 **block_kwargs,
+             )
++        elif camctrl_type == "BidirectionalGDNUCPESinglePathLiteLA":
++            # Pure-PyTorch GDN+UCPE single-path variant used on MPS / when
++            # Triton kernels are unavailable.  Same module shapes and
++            # state-dict keys as the *BothTriton variant -- just swaps the
++            # fused Triton scans for the torch_chunk / torch_recurrent
++            # reference implementations defined in sana_gdn_camctrl_blocks.
++            self_num_heads = hidden_size // linear_head_dim
++            # The pure variant inherits from _GDNUCPEBase -> GDN which silently
++            # absorbs unknown kwargs (e.g. ``use_autograd_kernel`` -- only the
++            # Triton subclass actually consumes it).
++            _gdn_kwargs = {k: v for k, v in block_kwargs.items() if k != "use_autograd_kernel"}
++            self.attn = BidirectionalGDNUCPESinglePathLiteLA(
++                hidden_size,
++                hidden_size,
++                heads=self_num_heads,
++                cam_dim=hidden_size // cam_attn_compress,
++                cam_heads=max(1, self_num_heads // cam_attn_compress),
++                eps=1e-8,
++                qk_norm=qk_norm,
++                patch_size=patch_size,
++                **_gdn_kwargs,
++            )
+         elif camctrl_type == "BidirectionalSoftmaxUCPESinglePathLiteLA":
+             self_num_heads = hidden_size // linear_head_dim
+             self.attn = BidirectionalSoftmaxUCPESinglePathLiteLA(
+@@ -552,6 +614,10 @@ class SanaVideoMSCamCtrlBlock(nn.Module):
+ 
+ _GDN_TO_SOFTMAX_CAMCTRL: dict[str, str] = {
+     "BidirectionalGDNUCPESinglePathLiteLABothTriton": "BidirectionalSoftmaxUCPESinglePathLiteLA",
++    # Pure-PyTorch fallback used on MPS (and when SANA_WM_RESTORE_GDN=1).
++    # Without this entry, _inject_softmax_layers can't recover the trained
++    # hybrid topology because the remap happens before softmax injection.
++    "BidirectionalGDNUCPESinglePathLiteLA": "BidirectionalSoftmaxUCPESinglePathLiteLA",
+ }
+ 
+ 
+@@ -680,11 +746,17 @@ class SanaMSVideoCamCtrl(Sana):
+         self.t_block = nn.Sequential(nn.SiLU(), nn.Linear(hidden_size, 6 * hidden_size, bias=True))
+         self.pos_embed_ms = None
+         self.pack_latents = pack_latents
++        # Remap *Triton block-type names to pure-PyTorch equivalents when
++        # running on MPS / forced pure-PyTorch mode.  Must happen before
++        # any downstream consumer (assert, block-list construction).
++        attn_type = _force_no_triton_block_type(attn_type)
++        camctrl_type = _force_no_triton_block_type(camctrl_type)
+         self.attn_type = attn_type
+ 
+         self.camctrl_type = camctrl_type
+         assert self.camctrl_type in [
+             "BidirectionalGDNUCPESinglePathLiteLABothTriton",
++            "BidirectionalGDNUCPESinglePathLiteLA",
+             "BidirectionalSoftmaxUCPESinglePathLiteLA",
+         ], f"Not supported camera control type: {self.camctrl_type}"
+ 
+@@ -802,12 +874,17 @@ class SanaMSVideoCamCtrl(Sana):
+                 camctrl_type_list,
+                 softmax_every_n,
+             )
+-            if get_rank() == 0:
+-                self.logger(
+-                    f"Hybrid attention (softmax_every_n={softmax_every_n}):\n"
+-                    f"  attn_type_list = {attn_type_list}\n"
+-                    f"  camctrl_type_list = {camctrl_type_list}"
+-                )
++        # Defensive: also remap any *Triton entries that survived
++        # _inject_softmax_layers (e.g. when softmax_every_n=0 or when the
++        # mapping table evolves).  Safe no-op when CUDA+Triton are usable.
++        attn_type_list = [_force_no_triton_block_type(x) for x in attn_type_list]
++        camctrl_type_list = [_force_no_triton_block_type(x) for x in camctrl_type_list]
++        if softmax_every_n > 0 and get_rank() == 0:
++            self.logger(
++                f"Hybrid attention (softmax_every_n={softmax_every_n}):\n"
++                f"  attn_type_list = {attn_type_list}\n"
++                f"  camctrl_type_list = {camctrl_type_list}"
++            )
+ 
+         self.blocks = nn.ModuleList(
+             [
+@@ -1293,7 +1370,8 @@ class SanaMSVideoCamCtrl(Sana):
+         mask_mod = generate_temporal_head_mask_mod(context_length, prompt_length, num_frame, frame_size, mul=multiplier)
+         block_mask = create_block_mask_cached(mask_mod, None, None, seq_len, seq_len, device=device, _compile=True)
+ 
+-        hidden_states = flex_attention(query, key, value, block_mask=block_mask)
++        # Warm-up call so flex_attention compiles its kernel against this block_mask.
++        _ = flex_attention(query, key, value, block_mask=block_mask)
+ 
+         return block_mask
+ 
+diff --git a/diffusion/model/norms.py b/diffusion/model/norms.py
+index 61fb101..5fe1718 100755
+--- a/diffusion/model/norms.py
++++ b/diffusion/model/norms.py
+@@ -15,6 +15,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ 
+ import copy
++from typing import Any
+ 
+ import torch
+ import torch.nn as nn
+@@ -39,7 +40,7 @@ class LayerNorm2d(nn.LayerNorm):
+ 
+ # register normalization function here
+ #   name: module, kwargs with default values
+-REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, any]]] = {
++REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, Any]]] = {
+     "bn2d": (nn.BatchNorm2d, {"num_features": None, "eps": 1e-5, "momentum": 0.1, "affine": True}),
+     "syncbn": (nn.SyncBatchNorm, {"num_features": None, "eps": 1e-5, "momentum": 0.1, "affine": True}),
+     "ln": (nn.LayerNorm, {"normalized_shape": None, "eps": 1e-5, "elementwise_affine": True}),
+@@ -47,7 +48,7 @@ REGISTERED_NORMALIZATION_DICT: dict[str, tuple[type, dict[str, any]]] = {
+ }
+ 
+ 
+-def build_norm(name="bn2d", num_features=None, affine=True, **kwargs) -> nn.Module or None:
++def build_norm(name: str | None = "bn2d", num_features: int | None = None, affine: bool = True, **kwargs: Any) -> nn.Module | None:
+     if name in ["ln", "ln2d"]:
+         kwargs["normalized_shape"] = num_features
+         kwargs["elementwise_affine"] = affine
+@@ -66,7 +67,7 @@ def build_norm(name="bn2d", num_features=None, affine=True, **kwargs) -> nn.Modu
+         raise ValueError("do not support: %s" % name)
+ 
+ 
+-def get_norm_name(norm: nn.Module or None) -> str or None:
++def get_norm_name(norm: nn.Module | None) -> str | None:
+     if norm is None:
+         return None
+     module2name = {}
+@@ -170,7 +171,7 @@ def remove_bn(model: nn.Module) -> None:
+             m.forward = lambda x: x
+ 
+ 
+-def set_norm_eps(model: nn.Module, eps: float or None = None, momentum: float or None = None) -> None:
++def set_norm_eps(model: nn.Module, eps: float | None = None, momentum: float | None = None) -> None:
+     for m in model.modules():
+         if isinstance(m, (nn.GroupNorm, nn.LayerNorm, _BatchNorm)):
+             if eps is not None:
+diff --git a/diffusion/model/ops/fused_cam_gdn.py b/diffusion/model/ops/fused_cam_gdn.py
+index 6815cfb..9f7f8ea 100644
+--- a/diffusion/model/ops/fused_cam_gdn.py
++++ b/diffusion/model/ops/fused_cam_gdn.py
+@@ -25,8 +25,53 @@ The camera-branch *scan* runs through ``cam_scan_bidi_chunkwise`` in
+ from __future__ import annotations
+ 
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:  # pragma: no cover - non-CUDA platforms (MPS, CPU)
++    HAS_TRITON = False
++
++    class _TritonStub:
++        @staticmethod
++        def jit(fn=None, **_kw):
++            if fn is None:
++                def _wrap(f):
++                    return f
++
++                return _wrap
++            return fn
++
++        @staticmethod
++        def next_power_of_2(n):
++            n = int(n)
++            p = 1
++            while p < n:
++                p <<= 1
++            return p
++
++        def __getattr__(self, name):
++            return _TritonStub()
++
++        def __call__(self, *a, **kw):
++            def _wrap(fn):
++                return fn
++
++            return _wrap
++
++    class _TLStub:
++        constexpr = int
++
++        def __getattr__(self, name):
++            return _TLStub()
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton = _TritonStub()  # type: ignore[assignment]
++    tl = _TLStub()  # type: ignore[assignment]
+ 
+ from diffusion.model.nets.sana_camctrl_blocks import (
+     compute_fov_from_fx_xi,
+diff --git a/diffusion/model/ops/fused_gdn.py b/diffusion/model/ops/fused_gdn.py
+index 8d09564..0f2136a 100644
+--- a/diffusion/model/ops/fused_gdn.py
++++ b/diffusion/model/ops/fused_gdn.py
+@@ -21,9 +21,60 @@ from __future__ import annotations
+ import os
+ 
+ import torch
+-import torch.nn.functional as F
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:  # pragma: no cover - non-CUDA platforms (MPS, CPU)
++    HAS_TRITON = False
++
++    class _TritonStub:
++        """Minimal stub so module-level @triton.jit decorators don't crash on CPU/MPS.
++
++        The decorated functions are never *called* on non-CUDA platforms
++        (callers route around them via SANA_WM_FORCE_PURE_PYTORCH), but the
++        decorator itself executes at import time.
++        """
++
++        @staticmethod
++        def jit(fn=None, **_kw):  # accepts @triton.jit or @triton.jit(...)
++            if fn is None:
++                def _wrap(f):
++                    return f
++
++                return _wrap
++            return fn
++
++        @staticmethod
++        def next_power_of_2(n):
++            n = int(n)
++            p = 1
++            while p < n:
++                p <<= 1
++            return p
++
++        def __getattr__(self, name):  # autotune, heuristics, Config, cdiv, ...
++            return _TritonStub()
++
++        def __call__(self, *a, **kw):
++            def _wrap(fn):
++                return fn
++
++            return _wrap
++
++    class _TLStub:
++        constexpr = int
++
++        def __getattr__(self, name):
++            return _TLStub()
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton = _TritonStub()  # type: ignore[assignment]
++    tl = _TLStub()  # type: ignore[assignment]
+ 
+ # =====================================================================
+ #  GPU-adaptive kernel config
+diff --git a/diffusion/model/ops/fused_gdn_chunkwise.py b/diffusion/model/ops/fused_gdn_chunkwise.py
+index ec96bda..3c5be2f 100644
+--- a/diffusion/model/ops/fused_gdn_chunkwise.py
++++ b/diffusion/model/ops/fused_gdn_chunkwise.py
+@@ -21,8 +21,53 @@ from __future__ import annotations
+ from dataclasses import dataclass
+ 
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:  # pragma: no cover - non-CUDA platforms (MPS, CPU)
++    HAS_TRITON = False
++
++    class _TritonStub:
++        @staticmethod
++        def jit(fn=None, **_kw):
++            if fn is None:
++                def _wrap(f):
++                    return f
++
++                return _wrap
++            return fn
++
++        @staticmethod
++        def next_power_of_2(n):
++            n = int(n)
++            p = 1
++            while p < n:
++                p <<= 1
++            return p
++
++        def __getattr__(self, name):
++            return _TritonStub()
++
++        def __call__(self, *a, **kw):
++            def _wrap(fn):
++                return fn
++
++            return _wrap
++
++    class _TLStub:
++        constexpr = int
++
++        def __getattr__(self, name):
++            return _TLStub()
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton = _TritonStub()  # type: ignore[assignment]
++    tl = _TLStub()  # type: ignore[assignment]
+ 
+ _CAM_IDENTITY_CACHE: dict[
+     tuple[str, int | None, int, int, int], tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+diff --git a/diffusion/model/ops/fused_gdn_chunkwise_bwd.py b/diffusion/model/ops/fused_gdn_chunkwise_bwd.py
+index 1a22c9d..ddb3e32 100644
+--- a/diffusion/model/ops/fused_gdn_chunkwise_bwd.py
++++ b/diffusion/model/ops/fused_gdn_chunkwise_bwd.py
+@@ -18,8 +18,53 @@ Validated at cos_sim ≥ 0.999 across P0/P2 at H100 layer-level bench.
+ from __future__ import annotations
+ 
+ import torch
+-import triton
+-import triton.language as tl
++
++try:
++    import triton
++    import triton.language as tl
++
++    HAS_TRITON = True
++except ImportError:  # pragma: no cover - non-CUDA platforms (MPS, CPU)
++    HAS_TRITON = False
++
++    class _TritonStub:
++        @staticmethod
++        def jit(fn=None, **_kw):
++            if fn is None:
++                def _wrap(f):
++                    return f
++
++                return _wrap
++            return fn
++
++        @staticmethod
++        def next_power_of_2(n):
++            n = int(n)
++            p = 1
++            while p < n:
++                p <<= 1
++            return p
++
++        def __getattr__(self, name):
++            return _TritonStub()
++
++        def __call__(self, *a, **kw):
++            def _wrap(fn):
++                return fn
++
++            return _wrap
++
++    class _TLStub:
++        constexpr = int
++
++        def __getattr__(self, name):
++            return _TLStub()
++
++        def __call__(self, *a, **kw):
++            return None
++
++    triton = _TritonStub()  # type: ignore[assignment]
++    tl = _TLStub()  # type: ignore[assignment]
+ 
+ from diffusion.model.ops.fused_gdn_chunkwise import (
+     _arch_key,
+diff --git a/diffusion/model/respace.py b/diffusion/model/respace.py
+index 1f84a0e..c4f1c2d 100755
+--- a/diffusion/model/respace.py
++++ b/diffusion/model/respace.py
+@@ -291,7 +291,6 @@ class IncrementalTimesteps:
+         ts[th.arange(B, device=self.device), curfs] = anchors
+ 
+         # left side (non-increasing): use log_mat_e
+-        # iterate frames; vectorize across batch
+         for f in range(self.F - 2, -1, -1):
+             # Which samples need this f on the left of their curf?
+             need = curfs > f
+@@ -392,7 +391,6 @@ def process_timesteps(
+                 timesteps_list = [timesteps_list[:, i] for i in range(num_chunks)]  # [b] * num_chunks
+             else:
+                 timesteps_list = [base_timesteps]  # b
+-                # incremental sample timesteps for each chunk
+                 for i in range(num_chunks - 1):
+                     # sample B timesteps smaller than timesteps_list[-1]
+                     max_timestep = timesteps_list[-1]  # b
+diff --git a/diffusion/model/sa_solver.py b/diffusion/model/sa_solver.py
+index 8525128..8a8453e 100755
+--- a/diffusion/model/sa_solver.py
++++ b/diffusion/model/sa_solver.py
+@@ -17,7 +17,6 @@
+ import math
+ 
+ import torch
+-import torch.nn.functional as F
+ from tqdm import tqdm
+ 
+ 
+diff --git a/diffusion/model/utils.py b/diffusion/model/utils.py
+index 8d9af9b..cdb84da 100755
+--- a/diffusion/model/utils.py
++++ b/diffusion/model/utils.py
+@@ -31,7 +31,7 @@ import torch.nn as nn
+ import torch.nn.functional as F
+ from PIL import Image
+ from torch.nn.attention.flex_attention import create_block_mask
+-from torch.utils.checkpoint import checkpoint, checkpoint_sequential
++from torch.utils.checkpoint import checkpoint
+ 
+ 
+ def _ntuple(n):
+@@ -518,6 +518,24 @@ def prepare_prompt_ar(prompt, ratios, device="cpu", show=True):
+     )
+ 
+ 
++def classify_height_width_bin(height: int, width: int, ratios: dict) -> tuple[int, int]:
++    """Returns binned height and width."""
++    ar = float(height / width)
++    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
++    default_hw = ratios[closest_ratio]
++    return int(default_hw[0]), int(default_hw[1])
++
++
++def guidance_type_select(default_guidance_type, pag_scale, attn_type):
++    """Select guidance type for PAG-aware pipelines (used by app/sana_*pipeline.py)."""
++    guidance_type = default_guidance_type
++    if not (pag_scale > 1.0 and attn_type == "linear"):
++        guidance_type = "classifier-free"
++    elif pag_scale > 1.0 and attn_type == "linear":
++        guidance_type = "classifier-free_PAG"
++    return guidance_type
++
++
+ def resize_and_crop_tensor(samples: torch.Tensor, new_width: int, new_height: int) -> torch.Tensor:
+     orig_height, orig_width = samples.shape[2], samples.shape[3]
+ 
+@@ -572,14 +590,14 @@ def list_sum(x: list) -> Any:
+     return x[0] if len(x) == 1 else x[0] + list_sum(x[1:])
+ 
+ 
+-def val2list(x: list or tuple or any, repeat_time=1) -> list:  # type: ignore
++def val2list(x: list | tuple | Any, repeat_time: int = 1) -> list:
+     """Repeat `val` for `repeat_time` times and return the list or val if list/tuple."""
+     if isinstance(x, (list, tuple)):
+         return list(x)
+     return [x for _ in range(repeat_time)]
+ 
+ 
+-def val2tuple(x: list or tuple or any, min_len: int = 1, idx_repeat: int = -1) -> tuple:  # type: ignore
++def val2tuple(x: list | tuple | Any, min_len: int = 1, idx_repeat: int = -1) -> tuple:
+     """Return tuple with min_len by repeating element at idx_repeat."""
+     # convert to list first
+     x = val2list(x)
+@@ -591,7 +609,7 @@ def val2tuple(x: list or tuple or any, min_len: int = 1, idx_repeat: int = -1) -
+     return tuple(x)
+ 
+ 
+-def get_same_padding(kernel_size: int or tuple[int, ...]) -> int or tuple[int, ...]:
++def get_same_padding(kernel_size: int | tuple[int, ...]) -> int | tuple[int, ...]:
+     if isinstance(kernel_size, tuple):
+         return tuple([get_same_padding(ks) for ks in kernel_size])
+     else:
+diff --git a/diffusion/model/wan/clip.py b/diffusion/model/wan/clip.py
+index 54c828a..d8f809c 100644
+--- a/diffusion/model/wan/clip.py
++++ b/diffusion/model/wan/clip.py
+@@ -7,8 +7,6 @@ import torch
+ import torch.nn as nn
+ import torch.nn.functional as F
+ import torchvision.transforms as T
+-from safetensors import torch as st
+-from transformers import SiglipVisionModel
+ 
+ from .attention import flash_attention
+ from .tokenizers import HuggingfaceTokenizer
+diff --git a/diffusion/model/wan/model.py b/diffusion/model/wan/model.py
+index 5b5024c..586309d 100644
+--- a/diffusion/model/wan/model.py
++++ b/diffusion/model/wan/model.py
+@@ -1,5 +1,6 @@
+ # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+ import math
++import os
+ from typing import Optional
+ 
+ import torch
+@@ -9,13 +10,41 @@ import torch.nn.functional as F
+ from diffusers.configuration_utils import ConfigMixin, register_to_config
+ from diffusers.models.modeling_utils import ModelMixin
+ 
+-from diffusion.model.nets.basic_modules import GLUMBConvTemp, Mlp
++from diffusion.model.nets.basic_modules import GLUMBConvTemp
+ from diffusion.utils.logger import get_logger
+ 
+ from .attention import flash_attention
+ 
+ __all__ = ["WanModel"]
+ 
++# MPS-compatible RoPE flag: torch.view_as_complex is unsupported on MPS.
++_USE_REAL_ROPE_WAN = (
++    os.environ.get("SANA_WM_FORCE_PURE_PYTORCH", "0") == "1"
++    or os.environ.get("SANA_WM_NO_COMPLEX_ROPE", "0") == "1"
++)
++
++
++def _rope_apply_real_wan(x_slice: torch.Tensor, freqs_i: torch.Tensor, n: int) -> torch.Tensor:
++    """Real-valued equivalent of:
++        x_i = view_as_complex(x_slice.to(float64).reshape(seq_len, n, -1, 2))
++        x_i = view_as_real(x_i * freqs_i).flatten(2)
++    Used by ``rope_apply`` for MPS.
++    """
++    seq_len = x_slice.shape[0]
++    x_pairs = x_slice.to(torch.float32).reshape(seq_len, n, -1, 2)
++    x_re = x_pairs[..., 0]
++    x_im = x_pairs[..., 1]
++    if freqs_i.is_complex():
++        f_cos = freqs_i.real.to(x_re.dtype)
++        f_sin = freqs_i.imag.to(x_re.dtype)
++    else:
++        f_cos = freqs_i[..., 0].to(x_re.dtype)
++        f_sin = freqs_i[..., 1].to(x_re.dtype)
++    o_re = x_re * f_cos - x_im * f_sin
++    o_im = x_re * f_sin + x_im * f_cos
++    out = torch.stack([o_re, o_im], dim=-1).flatten(2)
++    return out
++
+ 
+ class AttentionHook:
+     output = None
+@@ -135,16 +164,13 @@ def rope_params(max_seq_len, dim, theta=10000):
+ def rope_apply(x, grid_sizes, freqs):
+     n, c = x.size(2), x.size(3) // 2
+ 
+-    # split freqs
+     freqs = freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
+ 
+-    # loop over samples
++    use_real = _USE_REAL_ROPE_WAN or x.device.type == "mps"
+     output = []
+     for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+         seq_len = f * h * w
+ 
+-        # precompute multipliers
+-        x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2))
+         freqs_i = torch.cat(
+             [
+                 freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+@@ -154,8 +180,13 @@ def rope_apply(x, grid_sizes, freqs):
+             dim=-1,
+         ).reshape(seq_len, 1, -1)
+ 
+-        # apply rotary embedding
+-        x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
++        if use_real:
++            x_i = _rope_apply_real_wan(x[i, :seq_len], freqs_i, n)
++        else:
++            # precompute multipliers
++            x_i = torch.view_as_complex(x[i, :seq_len].to(torch.float64).reshape(seq_len, n, -1, 2))
++            # apply rotary embedding
++            x_i = torch.view_as_real(x_i * freqs_i).flatten(2)
+         x_i = torch.cat([x_i, x[i, seq_len:]])
+ 
+         # append to collection
+diff --git a/diffusion/model/wan/vae.py b/diffusion/model/wan/vae.py
+index d18effe..37210c2 100644
+--- a/diffusion/model/wan/vae.py
++++ b/diffusion/model/wan/vae.py
+@@ -1,15 +1,14 @@
+ # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+ import logging
+-from dataclasses import dataclass
+-from typing import Optional
+ 
+ import torch
+ import torch.cuda.amp as amp
+ import torch.nn as nn
+ import torch.nn.functional as F
+ from einops import rearrange
+-from omegaconf import MISSING, OmegaConf
++from omegaconf import OmegaConf
+ 
++from diffusion.model.wan.vae_config import WanVAEConfig
+ from tools.download import find_model
+ 
+ __all__ = [
+@@ -570,12 +569,6 @@ def _video_vae(pretrained_path=None, z_dim=None, device="cpu", **kwargs):
+     return model
+ 
+ 
+-@dataclass
+-class WanVAEConfig:
+-    # cache_dir
+-    cache_dir: Optional[str] = None
+-
+-
+ class WanVAE:
+     def __init__(self, z_dim=16, vae_pth="cache/vae_step_411000.pth", dtype=torch.float, device="cuda"):
+         self.dtype = dtype
+diff --git a/diffusion/model/wan/vae_config.py b/diffusion/model/wan/vae_config.py
+new file mode 100644
+index 0000000..5f06af9
+--- /dev/null
++++ b/diffusion/model/wan/vae_config.py
+@@ -0,0 +1,16 @@
++# Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
++"""Shared OmegaConf-structured config stub for the Wan-family VAEs.
++
++Imported by ``diffusion/model/wan/vae.py`` (``WanVAE``) and
++``diffusion/model/wan2_2/vae.py`` (``Wan2_2_VAE``); both used to declare a
++byte-identical local copy of this class, which made schema changes a
++two-file edit.
++"""
++from dataclasses import dataclass
++from typing import Optional
++
++
++@dataclass
++class WanVAEConfig:
++    # cache_dir
++    cache_dir: Optional[str] = None
+diff --git a/diffusion/model/wan2_2/vae.py b/diffusion/model/wan2_2/vae.py
+index b17452b..09cce2e 100644
+--- a/diffusion/model/wan2_2/vae.py
++++ b/diffusion/model/wan2_2/vae.py
+@@ -1,7 +1,5 @@
+ # Copyright 2024-2025 The Alibaba Wan Team Authors. All rights reserved.
+ import logging
+-from dataclasses import dataclass
+-from typing import Optional
+ 
+ import torch
+ import torch.cuda.amp as amp
+@@ -10,6 +8,8 @@ import torch.nn.functional as F
+ from einops import rearrange
+ from omegaconf import OmegaConf
+ 
++from diffusion.model.wan.vae_config import WanVAEConfig
++
+ __all__ = [
+     "Wan2_2_VAE",
+ ]
+@@ -834,12 +834,6 @@ def _video_vae(pretrained_path=None, z_dim=16, dim=160, device="cpu", **kwargs):
+     return model
+ 
+ 
+-@dataclass
+-class WanVAEConfig:
+-    # cache_dir
+-    cache_dir: Optional[str] = None
+-
+-
+ class Wan2_2_VAE:
+     def __init__(
+         self,
+diff --git a/diffusion/post_training/dataset/pickscore/prpocess.py b/diffusion/post_training/dataset/pickscore/prpocess.py
+index 09ae5e7..ae3a4ff 100644
+--- a/diffusion/post_training/dataset/pickscore/prpocess.py
++++ b/diffusion/post_training/dataset/pickscore/prpocess.py
+@@ -1,6 +1,6 @@
+ import random
+ 
+-from datasets import Dataset, load_dataset
++from datasets import load_dataset
+ 
+ # Load the original dataset
+ dataset = load_dataset("yuvalkirstain/pickapic_v1", num_proc=16)
+diff --git a/diffusion/post_training/rewards.py b/diffusion/post_training/rewards.py
+index 44def92..a25e97f 100644
+--- a/diffusion/post_training/rewards.py
++++ b/diffusion/post_training/rewards.py
+@@ -2,7 +2,6 @@
+ 
+ import os
+ 
+-import numpy as np
+ import torch
+ import torch.nn as nn
+ import torchvision.transforms as T
+diff --git a/diffusion/refiner/diffusers_ltx2_refiner.py b/diffusion/refiner/diffusers_ltx2_refiner.py
+index 6bc0aa0..768676b 100644
+--- a/diffusion/refiner/diffusers_ltx2_refiner.py
++++ b/diffusion/refiner/diffusers_ltx2_refiner.py
+@@ -23,6 +23,29 @@ from torch import nn
+ STAGE_2_DISTILLED_SIGMA_VALUES: tuple[float, ...] = (0.909375, 0.725, 0.421875, 0.0)
+ 
+ 
++def _pick_device() -> torch.device:
++    if torch.cuda.is_available():
++        return torch.device("cuda")
++    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
++        return torch.device("mps")
++    return torch.device("cpu")
++
++
++def _make_generator(device: torch.device, seed: int) -> tuple[torch.Generator, torch.device]:
++    """Return a (generator, generator_device) pair safe across cuda/mps/cpu.
++
++    MPS rejects device-bound generators for ``torch.randn`` in some torch
++    builds, so we transparently fall back to a CPU generator and let callers
++    move the produced tensor onto ``device``.
++    """
++    try:
++        gen = torch.Generator(device=device).manual_seed(int(seed))
++        return gen, device
++    except (RuntimeError, TypeError):
++        gen = torch.Generator().manual_seed(int(seed))
++        return gen, torch.device("cpu")
++
++
+ class DiffusersLTX2Refiner(nn.Module):
+     """Small Sana-WM adapter around diffusers LTX-2 modules."""
+ 
+@@ -76,7 +99,7 @@ class DiffusersLTX2Refiner(nn.Module):
+             raise ValueError(f"Stage-1 latent has {sana_latent.shape[2]} frames but sink_size={sink_size}.")
+ 
+         self.transformer.to("cpu")
+-        _empty_cuda_cache()
++        _empty_device_cache(self.device)
+         prompt_embeds, prompt_attention_mask = self._encode_prompt(prompt)
+ 
+         self.transformer.to(self.device)
+@@ -86,8 +109,12 @@ class DiffusersLTX2Refiner(nn.Module):
+ 
+         sink = z[:, :, :sink_size].contiguous()
+         current = z[:, :, sink_size:].contiguous()
+-        generator = torch.Generator(device=self.device).manual_seed(int(seed))
+-        eps = torch.randn(current.shape, generator=generator, device=self.device, dtype=self.dtype)
++        generator, gen_device = _make_generator(self.device, int(seed))
++        if gen_device == self.device:
++            eps = torch.randn(current.shape, generator=generator, device=self.device, dtype=self.dtype)
++        else:
++            # MPS path: sample on CPU then move (matching inference_sana_wm.py).
++            eps = torch.randn(current.shape, generator=generator, dtype=self.dtype).to(self.device)
+         noisy = (1.0 - start_sigma) * current + start_sigma * eps
+ 
+         iterator = range(len(sigmas) - 1)
+@@ -162,13 +189,13 @@ class DiffusersLTX2Refiner(nn.Module):
+         ).to(dtype=self.dtype)
+ 
+         del text_encoder, text_backbone, outputs, hidden_states
+-        _empty_cuda_cache()
++        _empty_device_cache(self.device)
+ 
+         self.connectors.to(self.device)
+         connector_prompt_embeds, _, connector_attention_mask = self.connectors(prompt_embeds, attention_mask)
+         self.connectors.to("cpu")
+         del prompt_embeds, attention_mask
+-        _empty_cuda_cache()
++        _empty_device_cache(self.device)
+ 
+         return connector_prompt_embeds.to(device=self.device, dtype=self.dtype), connector_attention_mask.to(
+             device=self.device
+@@ -462,7 +489,17 @@ def _unpack_latents(
+     return latents
+ 
+ 
+-def _empty_cuda_cache() -> None:
++def _empty_device_cache(device: torch.device | str | None = None) -> None:
++    """Release accelerator memory across CUDA, MPS, and CPU backends."""
+     if torch.cuda.is_available():
+         torch.cuda.empty_cache()
++    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
++        try:
++            torch.mps.empty_cache()
++        except Exception:
++            pass
+     gc.collect()
++
++
++# Backward-compat alias for any external imports.
++_empty_cuda_cache = _empty_device_cache
+diff --git a/diffusion/scheduler/flow_euler_sampler.py b/diffusion/scheduler/flow_euler_sampler.py
+index aa59d52..d504f99 100644
+--- a/diffusion/scheduler/flow_euler_sampler.py
++++ b/diffusion/scheduler/flow_euler_sampler.py
+@@ -23,7 +23,6 @@ from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import r
+ from diffusers.utils.torch_utils import randn_tensor
+ from tqdm import tqdm
+ 
+-from ..guiders.adaptive_projected_guidance import AdaptiveProjectedGuidance
+ 
+ 
+ class FlowEuler:
+@@ -164,12 +163,30 @@ class LTXFlowEuler(FlowEuler):
+             if isinstance(noise_pred, Transformer2DModelOutput):
+                 noise_pred = noise_pred[0]
+ 
++            # === SANA-WM MPS DIAGNOSTIC: per-frame magnitudes ===
++            if os.environ.get("SANA_WM_DEBUG_LATENTS", "0") == "1":
++                def _stats(t, label):
++                    s = t.detach().to(torch.float32)
++                    F = s.shape[2]
++                    per_frame = [(s[:, :, f].abs().mean().item(),
++                                  s[:, :, f].abs().max().item()) for f in range(F)]
++                    summary = " ".join(f"{f}:{a:.3f}/{m:.2f}" for f, (a, m) in enumerate(per_frame[:6])) + (" ..." if F > 6 else "")
++                    print(f"  [diag {label}] step={i} {summary}", flush=True)
++                if do_classifier_free_guidance:
++                    _u, _c = noise_pred.chunk(2)
++                    _stats(_u, "eps_uncond")
++                    _stats(_c, "eps_cond  ")
++                _stats(latents, "lat-in    ")
++
+             # perform guidance
+             if do_classifier_free_guidance:
+                 noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                 noise_pred = noise_pred_uncond + self.cfg_scale * (noise_pred_text - noise_pred_uncond)
+                 timestep = timestep.chunk(2)[0]
+ 
++            if os.environ.get("SANA_WM_DEBUG_LATENTS", "0") == "1":
++                _stats(noise_pred, "eps_cfg   ")
++
+             # compute the previous noisy sample x_t -> x_t-1
+             latents_dtype = latents.dtype
+             latents_shape = latents.shape
+diff --git a/diffusion/scheduler/longlive_flow_euler_sampler.py b/diffusion/scheduler/longlive_flow_euler_sampler.py
+index eebb8d2..2784ecf 100644
+--- a/diffusion/scheduler/longlive_flow_euler_sampler.py
++++ b/diffusion/scheduler/longlive_flow_euler_sampler.py
+@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
+ from typing import List, Optional
+ 
+ import torch
++from diffusers.models.modeling_outputs import Transformer2DModelOutput
+ from einops import rearrange
+ 
+ from diffusion.model.nets.basic_modules import CachedGLUMBConvTemp
+@@ -299,14 +300,6 @@ class SanaModelWrapper(torch.nn.Module):
+         else:
+             kv_cache_ret = None
+ 
+-        try:
+-            from diffusers.models.modeling_outputs import Transformer2DModelOutput
+-
+-            if isinstance(model_out, Transformer2DModelOutput):
+-                model_out = model_out[0]
+-        except Exception:
+-            pass
+-
+         if isinstance(model_out, Transformer2DModelOutput):
+             model_out = model_out[0]
+ 
+diff --git a/diffusion/utils/checkpoint.py b/diffusion/utils/checkpoint.py
+index 8d63c1e..5be0887 100755
+--- a/diffusion/utils/checkpoint.py
++++ b/diffusion/utils/checkpoint.py
+@@ -27,6 +27,29 @@ from diffusion.utils.logger import get_root_logger
+ from tools.download import find_model
+ 
+ 
++def _load_ckpt_with_auto_reshape(model, state_dict, strict=False):
++    """Load state_dict into model, auto-reshaping tensors whose rank differs by trailing 1s.
++
++    Skips keys absent in the checkpoint (prints a warning) and returns the
++    ``missing, unexpected`` keys reported by ``load_state_dict``.
++    """
++    new_state_dict = OrderedDict()
++
++    for k, v in model.state_dict().items():
++        if k in state_dict:
++            # auto reshape missing dimensions (e.g. [dim,dim2,1,1] -> [dim,dim2,1,1,1])
++            if state_dict[k].dim() < v.dim():
++                new_shape = state_dict[k].shape + (1,) * (v.dim() - state_dict[k].dim())
++                new_state_dict[k] = state_dict[k].reshape(*new_shape)
++            else:
++                new_state_dict[k] = state_dict[k]
++        else:
++            print(f"Warning: Missing key {k} in checkpoint")
++
++    missing, unexpect = model.load_state_dict(new_state_dict, strict=strict)
++    return missing, unexpect
++
++
+ def save_checkpoint(
+     work_dir,
+     epoch,
+@@ -283,24 +306,7 @@ def load_checkpoint_ddp(
+     state_dict["y_embedder.y_embedding"] = null_embed["uncond_prompt_embeds"][0]
+     rng_state = checkpoint.get("rng_state", None)
+ 
+-    def load_ckpt_with_auto_reshape(model, state_dict, strict=False):
+-        new_state_dict = OrderedDict()
+-
+-        for k, v in model.state_dict().items():
+-            if k in state_dict:
+-                # auto reshape missing dimensions (e.g. [dim,dim2,1,1] -> [dim,dim2,1,1,1])
+-                if state_dict[k].dim() < v.dim():
+-                    new_shape = state_dict[k].shape + (1,) * (v.dim() - state_dict[k].dim())
+-                    new_state_dict[k] = state_dict[k].reshape(*new_shape)
+-                else:
+-                    new_state_dict[k] = state_dict[k]
+-            else:
+-                print(f"Warning: Missing key {k} in checkpoint")
+-
+-        missing, unexpect = model.load_state_dict(new_state_dict, strict=strict)
+-        return missing, unexpect
+-
+-    missing, unexpect = load_ckpt_with_auto_reshape(model, state_dict, strict=False)
++    missing, unexpect = _load_ckpt_with_auto_reshape(model, state_dict, strict=False)
+ 
+     if model_ema is not None:
+         model_ema.load_state_dict(checkpoint["state_dict_ema"], strict=False)
+@@ -364,24 +370,7 @@ def load_checkpoint_fsdp(
+         if key in state_dict_model:
+             del state_dict_model[key]
+ 
+-    def load_ckpt_with_auto_reshape(model, state_dict, strict=False):
+-        new_state_dict = OrderedDict()
+-
+-        for k, v in model.state_dict().items():
+-            if k in state_dict:
+-                # auto reshape missing dimensions (e.g. [dim,dim2,1,1] -> [dim,dim2,1,1,1])
+-                if state_dict[k].dim() < v.dim():
+-                    new_shape = state_dict[k].shape + (1,) * (v.dim() - state_dict[k].dim())
+-                    new_state_dict[k] = state_dict[k].reshape(*new_shape)
+-                else:
+-                    new_state_dict[k] = state_dict[k]
+-            else:
+-                print(f"Warning: Missing key {k} in checkpoint")
+-
+-        missing, unexpect = model.load_state_dict(new_state_dict, strict=strict)
+-        return missing, unexpect
+-
+-    missing, unexpect = load_ckpt_with_auto_reshape(model, state_dict_model, strict=False)
++    missing, unexpect = _load_ckpt_with_auto_reshape(model, state_dict_model, strict=False)
+     # missing, unexpect = model.load_state_dict(state_dict_model, strict=False)
+     logger.info(f"Load checkpoint of {checkpoint}.")
+ 
+diff --git a/diffusion/utils/config_wan.py b/diffusion/utils/config_wan.py
+deleted file mode 100644
+index 4df9218..0000000
+--- a/diffusion/utils/config_wan.py
++++ /dev/null
+@@ -1,151 +0,0 @@
+-from dataclasses import dataclass, field
+-from typing import Any, Dict, List, Optional, Tuple, Union
+-
+-from .config import BaseConfig, DataConfig, SchedulerConfig, TrainingConfig, VideoDataConfig
+-
+-
+-@dataclass
+-class WanModelConfig(BaseConfig):
+-    model: str = "Wan_T2V_1300M"
+-    from_pretrained: Optional[str] = None
+-    load_model_ckpt: Optional[str] = None
+-    init_patch_embedding: bool = False
+-    image_size: int = 256
+-    video_width: int = 832
+-    video_height: int = 480
+-    num_frames: int = 81
+-    patch_size: List[int] = field(default_factory=lambda: [1, 2, 2])
+-    dim: int = 1536
+-    ffn_dim: int = 8960
+-    freq_dim: int = 256
+-    num_heads: int = 12
+-    num_layers: int = 30
+-    window_size: Tuple[int, int] = field(default_factory=lambda: (-1, -1))
+-    qk_norm: bool = True
+-    cross_attn_norm: bool = True
+-    eps: float = 1e-6
+-    mixed_precision: str = "bf16"  # ['fp16', 'fp32', 'bf16']
+-    fp32_attention: bool = True
+-    load_from: Optional[str] = None
+-    resume_from: Optional[Union[Dict[str, Any], str]] = field(
+-        default_factory=lambda: {
+-            "checkpoint": None,
+-            "load_ema": False,
+-            "resume_lr_scheduler": True,
+-            "resume_optimizer": True,
+-        }
+-    )
+-    aspect_ratio_type: str = "ASPECT_RATIO_1024"
+-    multi_scale: bool = False
+-    class_dropout_prob: float = 0.0
+-    guidance_type: str = "classifier-free"
+-    mask: Optional[str] = None  # first, full, last mask, or no mask
+-    image_latent_mode: str = "video_zero"  # ["repeat", "zero", "video_zero"]
+-    linear_attn_idx: Optional[List[int]] = None
+-    self_attn_type: str = "flash"  # ["linear", "mllalinear", "flash"] this only used together with linear_attn_idx
+-    rope_after: bool = False
+-    power: float = 1.0
+-    ffn_type: str = "mlp"
+-
+-
+-@dataclass
+-class WanVAEConfig(BaseConfig):
+-    vae_type: str = "WanVAE"
+-    vae_latent_dim: int = 16
+-    vae_pretrained: str = "checkpoints/Wan2.1-T2V-1.3B/Wan2.1_VAE.pth"
+-    vae_stride: List[int] = field(default_factory=lambda: [4, 8, 8])
+-    weight_dtype: str = "float32"
+-    extra: Any = None
+-    cache_dir: Optional[str] = None
+-    if_cache: bool = False  # no more cache by default
+-
+-
+-@dataclass
+-class WanTextEncoderConfig(BaseConfig):
+-    t5_model: str = "umt5_xxl"
+-    t5_dtype: str = "bfloat16"
+-    text_len: int = 512
+-    t5_checkpoint: str = "checkpoints/Wan2.1-T2V-1.3B/models_t5_umt5-xxl-enc-bf16.pth"
+-    t5_tokenizer: str = "google/umt5-xxl"
+-    extra: Any = None
+-    caption_channels: int = 4096
+-
+-
+-@dataclass
+-class WanImageEncoderConfig(BaseConfig):
+-    image_encoder_type: Optional[str] = None
+-    image_encoder_pretrained: Optional[str] = None
+-    image_encoder_tokenizer: Optional[str] = None
+-    weight_dtype: str = "float32"
+-    extra: Any = None
+-
+-
+-@dataclass
+-class LoraConfig(BaseConfig):
+-    """Configuration for LoRA (Low-Rank Adaptation) fine-tuning"""
+-
+-    use_lora: bool = False
+-    rank: int = 4  # Rank of LoRA adapters
+-    alpha: int = 4  # Scaling factor for LoRA
+-    target_modules: Optional[str] = "all-linear"  # Which modules to apply LoRA to
+-    dropout: float = 0.0  # Dropout for LoRA layers
+-    bias: str = "none"  # Bias handling: "none", "all", "lora_only"
+-    # Advanced LoRA settings
+-    init_lora_weights: str = "gaussian"  # "gaussian", "kaiming", "xavier"
+-    additional_trainable_layers: Optional[List[str]] = None  # Additional layers to keep trainable
+-    merge_weights: bool = False  # Whether to merge weights during training
+-    fan_in_fan_out: bool = False  # Set to True for certain transformer architectures
+-
+-
+-@dataclass
+-class FSDPConfig(BaseConfig):
+-    pass
+-
+-
+-@dataclass
+-class DistillConfig(BaseConfig):
+-    model: WanModelConfig
+-    distill_logit_weight: float = 0.0
+-    distill_attn_weight: float = 0.0
+-
+-
+-@dataclass
+-class WanTrainingConfig(TrainingConfig):
+-    sp_degree: int = 1  # sequence parallel degree
+-    fsdp_config: Optional[FSDPConfig] = None
+-    auto_lr: Optional[Dict[str, str]] = field(default_factory=lambda: {"rule": "sqrt"})
+-    validation_images: Optional[List[str]] = field(
+-        default_factory=lambda: [
+-            "dog",
+-            "portrait photo of a girl, photograph, highly detailed face, depth of field",
+-            "Self-portrait oil painting, a beautiful cyborg with golden hair, 8k",
+-            "Astronaut in a jungle, cold color palette, muted colors, detailed, 8k",
+-            "A photo of beautiful mountain with realistic sunset and blue lake, highly detailed, masterpiece",
+-        ]
+-    )  # Path to validation images
+-    fsdp_inference: bool = False
+-    train_la_only: bool = False
+-
+-
+-@dataclass
+-class WanConfig(BaseConfig):
+-    data: VideoDataConfig
+-    model: WanModelConfig
+-    vae: WanVAEConfig
+-    text_encoder: WanTextEncoderConfig
+-    scheduler: SchedulerConfig
+-    train: WanTrainingConfig
+-    work_dir: str = "output/"
+-    resume_from: Optional[str] = None
+-    load_from: Optional[str] = None
+-    debug: bool = False
+-    caching: bool = False
+-    report_to: str = "wandb"
+-    tracker_project_name: str = "wan-video"
+-    name: str = "baseline"
+-    loss_report_name: str = "loss"
+-    task: str = "t2v"  # t2v or ti2v
+-    image_encoder: Optional[WanImageEncoderConfig] = None
+-    distill: Optional[DistillConfig] = None
+-    lora: Optional[LoraConfig] = None
+-    cfg_scale: float = 3.0
+diff --git a/diffusion/utils/git.py b/diffusion/utils/git.py
+index 412c451..0a20d55 100644
+--- a/diffusion/utils/git.py
++++ b/diffusion/utils/git.py
+@@ -27,15 +27,12 @@ def save_git_snapshot(work_dir, job_name, logger):
+         logger.info(f"Git branch: {branch_name}")
+         logger.info("=" * 80)
+ 
+-        # check if work_dir is already a git repository
+         if not osp.exists(git_dir):
+             logger.info("[Git] initialize git repository...")
+             os.makedirs(work_dir, exist_ok=True)
+ 
+-            # initialize git repository
+             subprocess.run(["git", "init"], cwd=work_dir, check=True, capture_output=True)
+ 
+-            # copy code to code_snapshot/Sana
+             code_snapshot_dir = osp.join(work_dir, "code_snapshot", "Sana")
+             os.makedirs(code_snapshot_dir, exist_ok=True)
+             logger.info(f"[Git] copy code to {code_snapshot_dir}...")
+@@ -58,7 +55,6 @@ def save_git_snapshot(work_dir, job_name, logger):
+             ]
+             subprocess.run(rsync_cmd, check=True, capture_output=True)
+ 
+-            # create initial commit and branch
+             subprocess.run(["git", "add", "."], cwd=work_dir, check=True, capture_output=True)
+             subprocess.run(
+                 ["git", "commit", "-m", f"Initial commit - Training started at {timestamp} - Job: {job_name}"],
+@@ -79,7 +75,6 @@ def save_git_snapshot(work_dir, job_name, logger):
+         else:
+             logger.info("[Git] git repository already exists, update code snapshot...")
+ 
+-            # update code snapshot/Sana
+             code_snapshot_dir = osp.join(work_dir, "code_snapshot", "Sana")
+             rsync_cmd = [
+                 "rsync",
+@@ -100,13 +95,11 @@ def save_git_snapshot(work_dir, job_name, logger):
+             ]
+             subprocess.run(rsync_cmd, check=True, capture_output=True)
+ 
+-            # add changes
+             subprocess.run(["git", "add", "."], cwd=work_dir, check=True, capture_output=True)
+ 
+-            # check if there are changes
+             result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=work_dir, capture_output=True)
+ 
+-            if result.returncode != 0:  # there are changes
++            if result.returncode != 0:  # diff --quiet returns non-zero when there are staged changes
+                 logger.info("[Git] code has changed, create new commit and branch")
+                 subprocess.run(
+                     ["git", "commit", "-m", f"Code snapshot - Training restarted at {timestamp} - Job: {job_name}"],
+@@ -138,7 +131,6 @@ def save_git_snapshot(work_dir, job_name, logger):
+                     capture_output=True,
+                 )
+ 
+-        # save git history
+         log_output = subprocess.run(
+             ["git", "log", "--oneline", "--decorate", "--graph", "--all"],
+             cwd=work_dir,
+diff --git a/diffusion/utils/import_utils.py b/diffusion/utils/import_utils.py
+index 762b614..233b1de 100644
+--- a/diffusion/utils/import_utils.py
++++ b/diffusion/utils/import_utils.py
+@@ -3,7 +3,6 @@ import logging
+ import warnings
+ 
+ import importlib_metadata
+-from packaging import version
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -11,9 +10,6 @@ _xformers_available = importlib.util.find_spec("xformers") is not None
+ try:
+     if _xformers_available:
+         _xformers_version = importlib_metadata.version("xformers")
+-        _torch_version = importlib_metadata.version("torch")
+-        if version.Version(_torch_version) < version.Version("1.12"):
+-            raise ValueError("xformers is installed but requires PyTorch >= 1.12")
+         logger.debug(f"Successfully imported xformers version {_xformers_version}")
+ except importlib_metadata.PackageNotFoundError:
+     _xformers_available = False
+@@ -21,6 +17,8 @@ except importlib_metadata.PackageNotFoundError:
+ _triton_modules_available = importlib.util.find_spec("triton") is not None
+ try:
+     if _triton_modules_available:
++        from packaging import version
++
+         _triton_version = importlib_metadata.version("triton")
+         if version.Version(_triton_version) < version.Version("3.0.0"):
+             raise ValueError("triton is installed but requires Triton >= 3.0.0")
+@@ -36,54 +34,3 @@ def is_xformers_available():
+ 
+ def is_triton_module_available():
+     return _triton_modules_available
+-
+-
+-import inspect
+-import warnings
+-from typing import Any, Dict, Optional, Union
+-
+-from packaging import version
+-
+-
+-def deprecate(*args, take_from: Optional[Union[Dict, Any]] = None, standard_warn=True, stacklevel=2):
+-    from .. import __version__
+-
+-    deprecated_kwargs = take_from
+-    values = ()
+-    if not isinstance(args[0], tuple):
+-        args = (args,)
+-
+-    for attribute, version_name, message in args:
+-        if version.parse(version.parse(__version__).base_version) >= version.parse(version_name):
+-            raise ValueError(
+-                f"The deprecation tuple {(attribute, version_name, message)} should be removed since sana's"
+-                f" version {__version__} is >= {version_name}"
+-            )
+-
+-        warning = None
+-        if isinstance(deprecated_kwargs, dict) and attribute in deprecated_kwargs:
+-            values += (deprecated_kwargs.pop(attribute),)
+-            warning = f"The `{attribute}` argument is deprecated and will be removed in version {version_name}."
+-        elif hasattr(deprecated_kwargs, attribute):
+-            values += (getattr(deprecated_kwargs, attribute),)
+-            warning = f"The `{attribute}` attribute is deprecated and will be removed in version {version_name}."
+-        elif deprecated_kwargs is None:
+-            warning = f"`{attribute}` is deprecated and will be removed in version {version_name}."
+-
+-        if warning is not None:
+-            warning = warning + " " if standard_warn else ""
+-            warnings.warn(warning + message, FutureWarning, stacklevel=stacklevel)
+-
+-    if isinstance(deprecated_kwargs, dict) and len(deprecated_kwargs) > 0:
+-        call_frame = inspect.getouterframes(inspect.currentframe())[1]
+-        filename = call_frame.filename
+-        line_number = call_frame.lineno
+-        function = call_frame.function
+-        key, value = next(iter(deprecated_kwargs.items()))
+-        raise TypeError(f"{function} in {filename} line {line_number-1} got an unexpected keyword argument `{key}`")
+-
+-    if len(values) == 0:
+-        return
+-    elif len(values) == 1:
+-        return values[0]
+-    return values
+diff --git a/diffusion/utils/logger.py b/diffusion/utils/logger.py
+index 488ccf3..7f94aa9 100755
+--- a/diffusion/utils/logger.py
++++ b/diffusion/utils/logger.py
+@@ -144,20 +144,6 @@ def rename_file_with_creation_time(file_path):
+     return new_file_path
+ 
+ 
+-class TimezoneFormatter(logging.Formatter):
+-    def __init__(self, fmt=None, datefmt=None, tz=None):
+-        super().__init__(fmt, datefmt)
+-        self.tz = pytz.timezone(tz) if tz else None
+-
+-    def formatTime(self, record, datefmt=None):
+-        dt = datetime.fromtimestamp(record.created, self.tz)
+-        if datefmt:
+-            s = dt.strftime(datefmt)
+-        else:
+-            s = dt.isoformat()
+-        return s
+-
+-
+ class LogBuffer:
+     def __init__(self):
+         self.val_history = OrderedDict()
+diff --git a/diffusion/utils/misc.py b/diffusion/utils/misc.py
+index 7b86fcf..0cf9e06 100755
+--- a/diffusion/utils/misc.py
++++ b/diffusion/utils/misc.py
+@@ -27,7 +27,6 @@ import yaml
+ from mmcv import Config
+ from mmcv.runner import get_dist_info
+ 
+-from diffusion.utils.dist_utils import get_rank
+ from diffusion.utils.logger import get_root_logger
+ 
+ os.environ["MOX_SILENT_MODE"] = "1"  # mute moxing log
+@@ -424,22 +423,5 @@ class DebugUnderflowOverflow:
+         if var.dtype == torch.float32 and torch.ge(var.abs(), 65535).any().item():
+             detected = True
+             print(f"{ctx} has overflow values {var.abs().max().item()}.")
+-        # if needed to monitor large elements can enable the following
+-        if 0:  # and detected:
+-            n100 = var[torch.ge(var.abs(), 100)]
+-            if n100.numel() > 0:
+-                print(f"{ctx}:  n100={n100.numel()}")
+-            n1000 = var[torch.ge(var.abs(), 1000)]
+-            if n1000.numel() > 0:
+-                print(f"{ctx}: n1000={n1000.numel()}")
+-            n10000 = var[torch.ge(var.abs(), 10000)]
+-            if n10000.numel() > 0:
+-                print(f"{ctx}: n10000={n10000.numel()}")
+-
+-        if 0:
+-            print(f"min={var.min():9.2e} max={var.max():9.2e}")
+-
+-        if 0:
+-            print(f"min={var.min():9.2e} max={var.max():9.2e} var={var.var():9.2e} mean={var.mean():9.2e} ({ctx})")
+ 
+         return detected
+diff --git a/diffusion/utils/optimizer.py b/diffusion/utils/optimizer.py
+index b192efd..d3d6991 100755
+--- a/diffusion/utils/optimizer.py
++++ b/diffusion/utils/optimizer.py
+@@ -22,7 +22,6 @@ import numpy as np
+ import torch
+ import torch.optim
+ from bitsandbytes.optim import AdamW8bit
+-from came_pytorch import CAME
+ from mmcv import Config
+ from mmcv.runner import OPTIMIZER_BUILDERS, OPTIMIZERS, DefaultOptimizerConstructor
+ from mmcv.runner import build_optimizer as mm_build_optimizer
+diff --git a/inference_video_scripts/inference_sana_wm.py b/inference_video_scripts/inference_sana_wm.py
+index afa6949..8cc4c33 100644
+--- a/inference_video_scripts/inference_sana_wm.py
++++ b/inference_video_scripts/inference_sana_wm.py
+@@ -17,20 +17,24 @@ should pass them when available because intrinsics estimation error will
+ propagate into the generated geometry.
+ """
+ 
++import os
++
++# Enable MPS fallback for ops not yet implemented on Apple Silicon. Must be set
++# before any torch import so the runtime picks it up.
++os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
++# xformers' memory_efficient_attention interacts badly with our cross-attention
++# mask path on torch 2.9 + xformers 0.0.33; fall back to PyTorch SDPA, which is
++# numerically equivalent here. Must be set before any sana imports.
++os.environ.setdefault("DISABLE_XFORMERS", "1")
++
+ import argparse
+ import gc
+ import logging
+ import math
+-import os
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import Literal
+ 
+-# xformers' memory_efficient_attention interacts badly with our cross-attention
+-# mask path on torch 2.9 + xformers 0.0.33; fall back to PyTorch SDPA, which is
+-# numerically equivalent here. Must be set before any sana imports.
+-os.environ.setdefault("DISABLE_XFORMERS", "1")
+-
+ import imageio.v3 as iio
+ import numpy as np
+ import pyrallis
+@@ -85,6 +89,30 @@ DEFAULT_ROTATION_SPEED_DEG = 1.2
+ DEFAULT_PITCH_LIMIT_DEG = 85.0
+ ALLOWED_ACTION_KEYS: frozenset[str] = frozenset("wasdijkl")
+ 
++
++# ============================================================================
++# Device helpers (CUDA / MPS / CPU)
++# ============================================================================
++
++
++def _pick_device() -> torch.device:
++    if torch.cuda.is_available():
++        return torch.device("cuda")
++    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
++        return torch.device("mps")
++    return torch.device("cpu")
++
++
++def _empty_cache(device: torch.device) -> None:
++    if device.type == "cuda":
++        torch.cuda.empty_cache()
++    elif device.type == "mps":
++        try:
++            torch.mps.empty_cache()
++        except Exception:
++            pass
++
++
+ # ============================================================================
+ # Config
+ # ============================================================================
+@@ -261,6 +289,26 @@ def load_intrinsics(path: Path, num_frames: int) -> np.ndarray:
+     )
+ 
+ 
++def _default_intrinsics(image: Image.Image, logger: logging.Logger) -> np.ndarray:
++    """Heuristic ``(fx, fy, cx, cy)`` fallback when Pi3X is unavailable.
++
++    Assumes a ~55 deg horizontal FOV pinhole camera with principal point at the
++    image center. This matches typical hand-held/photo focal lengths and falls
++    safely inside the ``[MIN_FOV_DEG, MAX_FOV_DEG]`` sanity window. Accuracy is
++    obviously limited; pass ``--intrinsics`` when you have real numbers.
++    """
++    W, H = image.size
++    f = float(max(W, H)) * 0.96  # ~55 deg horizontal FOV on 1280-wide.
++    cx, cy = W / 2.0, H / 2.0
++    fov_x = math.degrees(2.0 * math.atan(W / (2.0 * f)))
++    logger.warning(
++        f"Pi3X unavailable; using default pinhole intrinsics "
++        f"(fx=fy={f:.1f}, cx={cx:.1f}, cy={cy:.1f}, FOV_H~{fov_x:.1f} deg). "
++        f"For best geometry, pass --intrinsics with measured values."
++    )
++    return np.array([f, f, cx, cy], dtype=np.float32)
++
++
+ def estimate_intrinsics_with_pi3x(image: Image.Image, device: torch.device, logger: logging.Logger) -> np.ndarray:
+     """Estimate ``(fx, fy, cx, cy)`` for ``image`` using Pi3X.
+ 
+@@ -292,13 +340,16 @@ def estimate_intrinsics_with_pi3x(image: Image.Image, device: torch.device, logg
+     resized = image.resize((W_model, H_model), Image.Resampling.LANCZOS)
+     tensor = T.ToTensor()(resized).unsqueeze(0).unsqueeze(0).to(device)
+ 
+-    dtype = (
+-        torch.bfloat16 if torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 else torch.float16
+-    )
++    if device.type == "cuda" and torch.cuda.get_device_capability()[0] >= 8:
++        dtype = torch.bfloat16
++    elif device.type == "mps":
++        dtype = torch.bfloat16
++    else:
++        dtype = torch.float16
+     model = Pi3X.from_pretrained("yyfz233/Pi3X").to(device).eval()
+     model.disable_multimodal()
+     model.requires_grad_(False)
+-    with torch.no_grad(), torch.amp.autocast("cuda", dtype=dtype):
++    with torch.no_grad(), torch.amp.autocast(device.type, dtype=dtype):
+         out = model(imgs=tensor)
+     rays_d = torch.nn.functional.normalize(out["local_points"], dim=-1)
+     K_model = recover_intrinsic_from_rays_d(rays_d, force_center_principal_point=True)
+@@ -322,8 +373,7 @@ def estimate_intrinsics_with_pi3x(image: Image.Image, device: torch.device, logg
+ 
+     # Free Pi3X memory before the heavy models load.
+     del model, out, K_model, rays_d, tensor
+-    if torch.cuda.is_available():
+-        torch.cuda.empty_cache()
++    _empty_cache(device)
+     gc.collect()
+     return np.array([fx, fy, cx, cy], dtype=np.float32)
+ 
+@@ -482,13 +532,15 @@ class SanaWMPipeline:
+         config: InferenceConfig,
+         model_path: str | Path,
+         *,
+-        device: torch.device | str = "cuda",
++        device: torch.device | str | None = None,
+         refiner: RefinerSettings | None = None,
+         offload_vae: bool = False,
+         offload_refiner: bool = False,
+         logger: logging.Logger | None = None,
+     ):
+         self.config = config
++        if device is None:
++            device = _pick_device()
+         self.device = torch.device(device)
+         self.refiner_settings = refiner
+         self.offload_vae = offload_vae
+@@ -590,7 +642,7 @@ class SanaWMPipeline:
+                 obj.to("cpu")
+             setattr(self, attr, None)
+         self._refiner_built = False
+-        torch.cuda.empty_cache()
++        _empty_cache(self.device)
+         gc.collect()
+ 
+     def _offload_stage1(self) -> None:
+@@ -603,7 +655,7 @@ class SanaWMPipeline:
+             except Exception:
+                 module.to("cpu")
+             setattr(self, attr, None)
+-        torch.cuda.empty_cache()
++        _empty_cache(self.device)
+         gc.collect()
+ 
+     # ------- generation -------
+@@ -699,7 +751,7 @@ class SanaWMPipeline:
+         ).to(self.weight_dtype)
+         if self.offload_vae:
+             self.vae.to("cpu")
+-            torch.cuda.empty_cache()
++            _empty_cache(self.device)
+ 
+         cond, cond_mask, neg, neg_mask = self._encode_prompts(prompt, params.negative_prompt)
+         raymap = camera["raymap"].unsqueeze(0).to(self.device, dtype=self.weight_dtype)
+@@ -712,17 +764,31 @@ class SanaWMPipeline:
+             mask_cfg, raymap_cfg, chunk_plucker_cfg = cond_mask, raymap, chunk_plucker
+ 
+         latent_channels = first_latent.shape[1]
+-        generator = torch.Generator(device=self.device).manual_seed(params.seed)
+-        z = torch.randn(
+-            1,
+-            latent_channels,
+-            latent_T,
+-            latent_h,
+-            latent_w,
+-            dtype=self.weight_dtype,
+-            device=self.device,
+-            generator=generator,
+-        )
++        try:
++            generator = torch.Generator(device=self.device).manual_seed(params.seed)
++            z = torch.randn(
++                1,
++                latent_channels,
++                latent_T,
++                latent_h,
++                latent_w,
++                dtype=self.weight_dtype,
++                device=self.device,
++                generator=generator,
++            )
++        except (RuntimeError, TypeError):
++            # MPS (and some older torch builds) reject device-bound generators
++            # for torch.randn. Fall back to a CPU generator + post-hoc transfer.
++            generator = torch.Generator().manual_seed(params.seed)
++            z = torch.randn(
++                1,
++                latent_channels,
++                latent_T,
++                latent_h,
++                latent_w,
++                dtype=self.weight_dtype,
++                generator=generator,
++            ).to(self.device)
+         z[:, :, :1] = first_latent
+ 
+         chunk_index = get_chunk_index_from_config(self.config, num_frames=latent_T)
+@@ -751,7 +817,7 @@ class SanaWMPipeline:
+             chunk_index,
+             generator,
+         )
+-        torch.cuda.empty_cache()
++        _empty_cache(self.device)
+         return samples.detach()
+ 
+     def _resolve_flow_shift(self, override: float | None) -> float:
+@@ -814,7 +880,7 @@ class SanaWMPipeline:
+         if self.offload_vae:
+             self.vae.to("cpu")
+         del samples, decoded
+-        torch.cuda.empty_cache()
++        _empty_cache(self.device)
+         return video
+ 
+     def _refine(
+@@ -849,7 +915,7 @@ class SanaWMPipeline:
+         # the output starts from the first refined frame.
+         video = video[1:]
+         del refined
+-        torch.cuda.empty_cache()
++        _empty_cache(self.device)
+         gc.collect()
+         return video
+ 
+@@ -993,7 +1059,8 @@ def main() -> None:
+     args = _build_parser().parse_args()
+ 
+     logger = get_root_logger()
+-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
++    device = _pick_device()
++    logger.info(f"Using compute device: {device.type}")
+ 
+     image = Image.open(args.image).convert("RGB")
+     prompt = args.prompt.read_text(encoding="utf-8", errors="replace").strip()
+@@ -1016,7 +1083,11 @@ def main() -> None:
+     if args.intrinsics is not None:
+         intr_src = load_intrinsics(args.intrinsics, num_frames)
+     else:
+-        intr_one = estimate_intrinsics_with_pi3x(image, device, logger)
++        try:
++            intr_one = estimate_intrinsics_with_pi3x(image, device, logger)
++        except (ImportError, ModuleNotFoundError) as exc:
++            logger.warning(f"Pi3X import failed ({exc}); falling back to default intrinsics.")
++            intr_one = _default_intrinsics(image, logger)
+         intr_src = np.broadcast_to(intr_one, (num_frames, 4)).copy()
+     intrinsics_vec4 = transform_intrinsics_for_crop(intr_src, src_size, resized_size, crop_offset)
+ 
+diff --git a/pyproject.toml b/pyproject.toml
+index 39d5e50..2de793d 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -29,7 +29,6 @@ dependencies = [
+     "gradio",
+     "image-reward",
+     "ipdb",
+-    "mmcv==1.7.2",
+     "omegaconf",
+     "opencv-python",
+     "optimum",
+@@ -42,20 +41,14 @@ dependencies = [
+     "tensorboard",
+     "tensorboardX",
+     "timm==0.6.13",
+-    "torch==2.9.1",
+-    "torchaudio==2.9.1",
+-    "torchvision==0.24.1",
+     "transformers==4.57.3",
+-    "triton==3.5.1",
+     "wandb",
+     "webdataset",
+-    "xformers==0.0.33.post2",
+     "yapf",
+     "spaces",
+     "matplotlib",
+     "termcolor",
+     "pyrallis",
+-    "bitsandbytes",
+     "fire",
+     "moviepy",
+     "imageio[pyav,ffmpeg]",
+@@ -65,8 +58,6 @@ dependencies = [
+     "ml_collections",
+     "hpsv2",
+     "open_clip_torch",
+-    "flash-linear-attention>=0.4.2",
+-    "liger_kernel",
+     "plyfile",
+ ]
+ 
+@@ -76,11 +67,22 @@ sana-run = "sana.cli.run:main"
+ sana-upload = "sana.cli.upload2hf:main"
+ 
+ [project.optional-dependencies]
++cuda = [
++    "torch==2.9.1",
++    "torchaudio==2.9.1",
++    "torchvision==0.24.1",
++    "xformers==0.0.33.post2",
++    "triton==3.5.1",
++    "flash-linear-attention>=0.4.2",
++    "mmcv==1.7.2",
++    "bitsandbytes",
++    "liger_kernel",
++]
+ 
+ [project.urls]
+ 
+-[tool.pip]
+-extra-index-url = ["https://download.pytorch.org/whl/cu128"]
++# [tool.pip]
++# extra-index-url = ["https://download.pytorch.org/whl/cu128"]
+ 
+ [tool.black]
+ line-length = 120
+diff --git a/sana/tools/__init__.py b/sana/tools/__init__.py
+index ba758a7..23c442c 100644
+--- a/sana/tools/__init__.py
++++ b/sana/tools/__init__.py
+@@ -1,2 +1,4 @@
+ from .download import download_model
+ from .hf_utils import hf_download_or_fpath, resolve_hf_path
++
++__all__ = ["download_model", "hf_download_or_fpath", "resolve_hf_path"]
+diff --git a/sana/tools/hf_utils.py b/sana/tools/hf_utils.py
+index 8b2d681..2356a8c 100644
+--- a/sana/tools/hf_utils.py
++++ b/sana/tools/hf_utils.py
+@@ -68,20 +68,13 @@ def hf_download_data(
+     repo_type="model",
+     download_full_repo=False,
+ ):
+-    """
+-    Download dummy data from a Hugging Face repository.
+-
+-    Args:
+-    repo_id (str): The ID of the Hugging Face repository.
+-    filename (str): The name of the file to download.
+-    cache_dir (str, optional): The directory to cache the downloaded file.
+-
+-    Returns:
+-    str: The path to the downloaded file.
++    """Download ``filename`` from a Hugging Face repo, or the whole repo
++    snapshot if ``download_full_repo`` is set. Returns the local path, or
++    ``None`` on failure (errors are printed, not raised).
+     """
+     try:
+         if download_full_repo:
+-            # download full repos to fit dc-ae
++            # dc-ae requires the full repo, not just a single file
+             snapshot_download(
+                 repo_id=repo_id,
+                 cache_dir=cache_dir,
+diff --git a/scripts/inference.py b/scripts/inference.py
+index c0416f5..f1f083d 100755
+--- a/scripts/inference.py
++++ b/scripts/inference.py
+@@ -35,12 +35,6 @@ from tqdm import tqdm
+ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ from diffusion import DPMS, FlowEuler, SASolverSampler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+ from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+diff --git a/scripts/inference_dpg.py b/scripts/inference_dpg.py
+index 6269e9d..7f7b9c5 100644
+--- a/scripts/inference_dpg.py
++++ b/scripts/inference_dpg.py
+@@ -35,10 +35,6 @@ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ from diffusion import DPMS, FlowEuler, SASolverSampler
+ from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+     get_chunks,
+ )
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+diff --git a/scripts/inference_geneval.py b/scripts/inference_geneval.py
+index 5271a91..c42d3c0 100644
+--- a/scripts/inference_geneval.py
++++ b/scripts/inference_geneval.py
+@@ -37,12 +37,6 @@ from tqdm import tqdm
+ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ from diffusion import DPMS, FlowEuler, SASolverSampler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+ from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+diff --git a/scripts/inference_geneval_diffusers.py b/scripts/inference_geneval_diffusers.py
+index 15ae687..483a79a 100644
+--- a/scripts/inference_geneval_diffusers.py
++++ b/scripts/inference_geneval_diffusers.py
+@@ -27,7 +27,7 @@ from PIL import Image
+ from pytorch_lightning import seed_everything
+ from torchvision.transforms import ToTensor
+ from torchvision.utils import make_grid
+-from tqdm import tqdm, trange
++from tqdm import tqdm
+ 
+ from diffusion.utils.logger import get_root_logger
+ 
+@@ -173,7 +173,7 @@ if __name__ == "__main__":
+     n_rows = batch_size = args.n_samples
+     assert args.batch_size == 1, ValueError(f"{batch_size} > 1 is not available in GenEval")
+ 
+-    from diffusers import DiffusionPipeline, StableDiffusionPipeline
++    from diffusers import DiffusionPipeline
+ 
+     model = DiffusionPipeline.from_pretrained(
+         args.model_path, torch_dtype=torch.float16, use_safetensors=True, variant="fp16"
+diff --git a/scripts/inference_image_reward.py b/scripts/inference_image_reward.py
+index b295862..d45b261 100644
+--- a/scripts/inference_image_reward.py
++++ b/scripts/inference_image_reward.py
+@@ -33,12 +33,6 @@ from torchvision.utils import save_image
+ from tqdm import tqdm
+ 
+ from diffusion import DPMS, FlowEuler, SASolverSampler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+ from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+diff --git a/scripts/inference_sana_sprint.py b/scripts/inference_sana_sprint.py
+index 19dfc15..63bf594 100644
+--- a/scripts/inference_sana_sprint.py
++++ b/scripts/inference_sana_sprint.py
+@@ -34,7 +34,6 @@ warnings.filterwarnings("ignore")  # ignore warning
+ os.environ["DISABLE_XFORMERS"] = "1"
+ 
+ from diffusion import SCMScheduler
+-from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+ from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+@@ -108,17 +107,11 @@ def visualize(config, args, model, items, bs, sample_steps, cfg_scale):
+         if bs == 1:
+             prompt = data_dict[chunk[0]]["prompt"] if dict_prompt else chunk[0]
+             prompt_clean, _, hw, ar, custom_hw = prepare_prompt_ar(prompt, base_ratios, device=device, show=False)
+-            latent_size_h, latent_size_w = (
+-                (int(hw[0, 0] // config.vae.vae_downsample_rate), int(hw[0, 1] // config.vae.vae_downsample_rate))
+-                if args.image_size == 1024
+-                else (latent_size, latent_size)
+-            )
+             prompts.append(prompt_clean.strip())
+         else:
+             for data in chunk:
+                 prompt = data_dict[data]["prompt"] if dict_prompt else data
+                 prompts.append(prepare_prompt_ar(prompt, base_ratios, device=device, show=False)[0].strip())
+-            latent_size_h, latent_size_w = latent_size, latent_size
+ 
+         # check exists
+         save_file_name = f"{chunk[0]}.jpg" if dict_prompt else f"{prompts[0][:100]}.jpg"
+diff --git a/scripts/inference_sana_sprint_geneval.py b/scripts/inference_sana_sprint_geneval.py
+index f5bbd78..824310a 100644
+--- a/scripts/inference_sana_sprint_geneval.py
++++ b/scripts/inference_sana_sprint_geneval.py
+@@ -38,12 +38,6 @@ warnings.filterwarnings("ignore")  # ignore warning
+ os.environ["DISABLE_XFORMERS"] = "1"
+ 
+ from diffusion import SCMScheduler, TrigFlowScheduler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+ from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+@@ -212,7 +206,6 @@ def visualize(sample_steps, cfg_scale):
+ 
+                 for _ in range(batch_size):
+                     prompts.append(prepare_prompt_ar(prompt, base_ratios, device=device, show=False)[0].strip())
+-                    latent_size_h, latent_size_w = latent_size, latent_size
+ 
+                 # check exists
+                 save_path = os.path.join(sample_path, f"{sample_count:05}.png")
+diff --git a/scripts/interface.py b/scripts/interface.py
+index a8d9215..61be483 100755
+--- a/scripts/interface.py
++++ b/scripts/interface.py
+@@ -21,7 +21,7 @@ import random
+ import warnings
+ from dataclasses import dataclass, field
+ from datetime import datetime
+-from typing import List, Optional, Tuple, Union
++from typing import List, Optional, Union
+ 
+ import gradio as gr
+ import numpy as np
+@@ -34,14 +34,13 @@ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ from asset.examples import examples
+ from diffusion import DPMS, FlowEuler, SASolverSampler
+-from diffusion.data.datasets.utils import (
+-    ASPECT_RATIO_512_TEST,
+-    ASPECT_RATIO_1024_TEST,
+-    ASPECT_RATIO_2048_TEST,
+-    ASPECT_RATIO_4096_TEST,
+-)
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode
+-from diffusion.model.utils import get_weight_dtype, prepare_prompt_ar, resize_and_crop_tensor
++from diffusion.model.utils import (
++    classify_height_width_bin,
++    get_weight_dtype,
++    prepare_prompt_ar,
++    resize_and_crop_tensor,
++)
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.dist_utils import flush
+ from tools.download import find_model
+@@ -104,14 +103,6 @@ def randomize_seed_fn(seed: int, randomize_seed: bool) -> int:
+     return seed
+ 
+ 
+-def classify_height_width_bin(height: int, width: int, ratios: dict) -> Tuple[int, int]:
+-    """Returns binned height and width."""
+-    ar = float(height / width)
+-    closest_ratio = min(ratios.keys(), key=lambda ratio: abs(float(ratio) - ar))
+-    default_hw = ratios[closest_ratio]
+-    return int(default_hw[0]), int(default_hw[1])
+-
+-
+ @torch.inference_mode()
+ def generate_img(
+     prompt,
+diff --git a/tools/controlnet/inference_controlnet.py b/tools/controlnet/inference_controlnet.py
+index f67798c..7747d5a 100644
+--- a/tools/controlnet/inference_controlnet.py
++++ b/tools/controlnet/inference_controlnet.py
+@@ -34,7 +34,6 @@ import cv2
+ from termcolor import colored
+ 
+ from diffusion import DPMS
+-from diffusion.data.datasets.utils import ASPECT_RATIO_512_TEST, ASPECT_RATIO_1024_TEST
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+ from diffusion.model.utils import prepare_prompt_ar
+ from diffusion.utils.config import SanaConfig, model_init_config
+diff --git a/tools/metrics/geneval/generation/diffusers_generate.py b/tools/metrics/geneval/generation/diffusers_generate.py
+index 97f8316..ec2ee5f 100644
+--- a/tools/metrics/geneval/generation/diffusers_generate.py
++++ b/tools/metrics/geneval/generation/diffusers_generate.py
+@@ -12,7 +12,7 @@ from PIL import Image
+ from pytorch_lightning import seed_everything
+ from torchvision.transforms import ToTensor
+ from torchvision.utils import make_grid
+-from tqdm import tqdm, trange
++from tqdm import trange
+ 
+ torch.set_grad_enabled(False)
+ 
+diff --git a/train_scripts/train_scm_ladd.py b/train_scripts/train_scm_ladd.py
+index 767620b..0237423 100644
+--- a/train_scripts/train_scm_ladd.py
++++ b/train_scripts/train_scm_ladd.py
+@@ -53,7 +53,7 @@ from diffusion.model.utils import get_weight_dtype
+ from diffusion.utils.checkpoint import load_checkpoint, save_checkpoint
+ from diffusion.utils.config import SanaConfig, model_init_config
+ from diffusion.utils.data_sampler import AspectRatioBatchSampler
+-from diffusion.utils.dist_utils import clip_grad_norm_, dist, flush, get_world_size
++from diffusion.utils.dist_utils import clip_grad_norm_, flush, get_world_size
+ from diffusion.utils.logger import LogBuffer, get_root_logger
+ from diffusion.utils.lr_scheduler import build_lr_scheduler
+ from diffusion.utils.misc import DebugUnderflowOverflow, init_random_seed, set_random_seed
+diff --git a/train_video_scripts/train_longsana.py b/train_video_scripts/train_longsana.py
+index e249be3..891f363 100644
+--- a/train_video_scripts/train_longsana.py
++++ b/train_video_scripts/train_longsana.py
+@@ -33,7 +33,6 @@ def main():
+     config.no_save = args.no_save
+     config.no_visualize = args.no_visualize
+ 
+-    # get the filename of config_path
+     config_name = os.path.dirname(args.config_path).split("/")[-1] if args.wandb_name is None else args.wandb_name
+     config.config_name = config_name
+     config.logdir = args.logdir
+diff --git a/train_video_scripts/train_video_ivjoint.py b/train_video_scripts/train_video_ivjoint.py
+index d2e9f47..f9952b3 100755
+--- a/train_video_scripts/train_video_ivjoint.py
++++ b/train_video_scripts/train_video_ivjoint.py
+@@ -28,14 +28,12 @@ from pathlib import Path
+ warnings.filterwarnings("ignore")  # ignore warning
+ 
+ import imageio
+-import numpy as np
+ import pyrallis
+ import torch
+ from accelerate import Accelerator, InitProcessGroupKwargs, skip_first_batches
+-from PIL import Image
+ from termcolor import colored
+ 
+-from diffusion import DPMS, FlowEuler, Scheduler
++from diffusion import DPMS, Scheduler
+ from diffusion.data.builder import build_dataloader, build_dataset
+ from diffusion.data.wids import DistributedRangedSampler
+ from diffusion.model.builder import build_model, get_tokenizer_and_text_encoder, get_vae, vae_decode, vae_encode
+@@ -44,7 +42,7 @@ from diffusion.model.utils import get_weight_dtype
+ from diffusion.utils.checkpoint import load_checkpoint, save_checkpoint
+ from diffusion.utils.config import SanaVideoConfig, model_video_init_config
+ from diffusion.utils.data_sampler import AspectRatioBatchSampler, AspectRatioBatchSamplerVideo
+-from diffusion.utils.dist_utils import dist, flush, get_world_size
++from diffusion.utils.dist_utils import flush, get_world_size
+ from diffusion.utils.git import save_git_snapshot
+ from diffusion.utils.logger import LogBuffer, get_root_logger
+ from diffusion.utils.lr_scheduler import build_lr_scheduler
+diff --git a/train_video_scripts/train_video_ivjoint_chunk.py b/train_video_scripts/train_video_ivjoint_chunk.py
+index c266ec6..7a0430b 100755
+--- a/train_video_scripts/train_video_ivjoint_chunk.py
++++ b/train_video_scripts/train_video_ivjoint_chunk.py
+@@ -33,7 +33,6 @@ import numpy as np
+ import pyrallis
+ import torch
+ from accelerate import Accelerator, InitProcessGroupKwargs, skip_first_batches
+-from PIL import Image
+ from termcolor import colored
+ 
+ from diffusion import DPMS, LTXFlowEuler, Scheduler

@@ -1,0 +1,14 @@
+# Bootstrapped by apply-patches.sh — not part of the repo
+/repo/
+/.venv/
+
+# Generated artifacts
+/outputs/
+
+# Local caches and editors
+__pycache__/
+*.pyc
+.DS_Store
+.idea/
+.vscode/
+*.swp
