@@ -28,10 +28,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 REPO = ROOT / "repo"
-VENV_PY = Path(os.environ.get(
-    "VENV_PY",
-    Path.home() / "Desktop" / "local" / ".venv" / "bin" / "python",
-))
+# Default venv path matches what apply-patches.sh creates (./.venv next to this
+# script). Override with the VENV_PY env var if your venv lives elsewhere.
+VENV_PY = Path(os.environ.get("VENV_PY", ROOT / ".venv" / "bin" / "python"))
 
 DEFAULT_IMAGE = REPO / "asset/sana_wm/demo_1.png"
 DEFAULT_PROMPT_FILE = REPO / "asset/sana_wm/demo_1.txt"
