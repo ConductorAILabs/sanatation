@@ -81,12 +81,28 @@ def append_md(line: str) -> None:
         f.write(line + "\n")
 
 
+def _host_label() -> str:
+    """Hardware identifier suitable for a public benchmarks report — no hostname."""
+    import platform
+    import subprocess
+    chip = "Apple Silicon"
+    try:
+        # `sysctl -n machdep.cpu.brand_string` returns e.g. "Apple M5 Pro Max"
+        out = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"],
+                             capture_output=True, text=True, timeout=2)
+        if out.returncode == 0 and out.stdout.strip():
+            chip = out.stdout.strip()
+    except Exception:
+        pass
+    return f"{chip} / {platform.system()} {platform.release()} / {platform.machine()}"
+
+
 def init_report() -> None:
     fresh = not REPORT.exists()
     if fresh:
         append_md(f"# SANA-WM + Qwen benchmarks")
         append_md("")
-        append_md(f"Host: `{os.uname().nodename}` / `{os.uname().sysname} {os.uname().release}`")
+        append_md(f"Host: `{_host_label()}`")
         append_md(f"Python: `{sys.version.split()[0]}` · Torch: `{torch.__version__}` · MPS: `{torch.backends.mps.is_available()}`")
         append_md("")
     append_md(f"## Run `{datetime.now().isoformat(timespec='seconds')}`")

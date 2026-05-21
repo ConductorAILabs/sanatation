@@ -1,7 +1,7 @@
 # SANA-WM + Qwen benchmarks
 
 Run at `2026-05-20T20:52:56`
-Host: `REDACTED-host` / `Darwin 25.4.0`
+Host: `Apple Silicon (M5 Pro Max, 128 GB)` / `Darwin 25.4.0` / `arm64`
 Python: `3.12.13`
 Torch: `2.12.0`
 MPS available: `True`
