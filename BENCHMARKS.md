@@ -120,3 +120,37 @@ Simulating 5 player turns. SANA at 4 steps × 9 frames per turn.
 
 ---
 Finished at `2026-05-20T21:11:08`
+## Run `2026-05-20T22:18` — subprocess-staged renderer
+
+End-to-end via `render.py` (Stage 1 → Decode subprocesses isolated).
+
+| config | stage1 (s) | refine (s) | decode (s) | total (s) | output |
+| --- | ---: | ---: | ---: | ---: | --- |
+| 9f × 4s, no refine | 30.5 | — | 9.9 | **40.4** | 230 KB MP4 |
+| 9f × 4s, --refine | 32.2 | 42.1 | 9.7 | **84.1** | 150 KB MP4 (sink dropped) |
+| 17f × 4s, no refine | OOM (SIGKILL after step 3) | — | — | — | — |
+| 17f × 4s, --refine | OOM (SIGKILL after step 3) | — | — | — | — |
+
+The 9-frame configs match expectations — Stage 1 is identical to the
+in-process path (~9s sample + ~21s pipeline build), refine adds 42s, decode
+10s.
+
+At 17 frames in subprocess the OS kills Stage 1 after the 3rd denoising
+step. The same config runs cleanly in-process via `benchmark.py` (14.5s)
+because that pipeline stays resident across the matrix sweep. The
+subprocess version pays the full pipeline-build cost on a cold start while
+swap is already saturated from prior runs — there's no headroom for the
+peak memory burst during sampling.
+
+**Workaround**: cold-start the OS (reboot, or `sudo purge`) between long
+sessions when running staged renders. junafinity's "96 GB rule" is exactly
+the constraint that bites here; their architecture pre-allocates the
+budget instead of relying on dynamic swap expansion.
+
+**Refiner per-frame cost**: 42.1s / 9 frames ≈ **4.7s/frame** on this Mac
+(M5 Pro Max). Extrapolated, a full 81-frame refined clip would land
+around **6.3 min** — substantially faster than junafinity's per-frame
+extrapolation suggests, though that's apples-to-oranges (different
+hardware, different chunk strategy, different swap state).
+
+---
