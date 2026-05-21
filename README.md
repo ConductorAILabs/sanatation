@@ -48,6 +48,20 @@ and runs the Stage-1 inference script. Output lands in `outputs/<name>_generated
 Tested on M5 Pro Max, 128 GB unified memory. Will work with less RAM but with
 shorter clips.
 
+## Two runtime modes
+
+Pick based on what you're doing — they share the same patched checkout and
+venv, only the orchestration differs.
+
+| Mode | Entry point | Latency | When to use |
+|---|---|---|---|
+| **In-process** | `run.sh`, `walk.py`, `adventure.py` | ~10s per 9-frame chunk | Interactive — chained turns, WASD play, LLM-driven scenes. Pipeline loads once. |
+| **Subprocess-staged** | `render.py` | ~40s per 9-frame clip today; designed to scale to long clips + refiner | One-shot rendering where each stage's memory must release before the next loads. |
+
+For day-to-day play, in-process. Subprocess staging is for the cinematic
+finale path and (once we add it) the LTX-2 refiner stage — see
+`PATCHES_TECHNICAL.md`.
+
 ## What works
 
 | | Status |
@@ -118,8 +132,16 @@ sanatation/
 ├── README.md                     ← this file
 ├── LICENSE                       ← Apache 2.0 (matches upstream)
 ├── PATCHES_TECHNICAL.md          ← per-file, per-line patch notes
+├── BENCHMARKS.md                 ← latency / memory measurements on M5 Pro Max
 ├── apply-patches.sh              ← clone NVlabs/Sana@485a6bb, apply patches, build venv
-├── run.sh                        ← run Stage-1 inference with all env vars set
+├── run.sh                        ← one-shot Stage-1 inference with all env vars set
+├── walk.py                       ← WASD camera walking; one keypress = one short chunk
+├── adventure.py                  ← LLM-driven adventure game (Qwen via Ollama + SANA)
+├── render.py                     ← subprocess-staged renderer (Stage-1 → decode for now)
+├── stages/                       ← subprocess entry points used by render.py
+│   ├── stage1.py                 ←   loads pipeline, samples Stage-1 latent, exits
+│   └── decode.py                 ←   loads VAE only, decodes latent → MP4, exits
+├── benchmark.py                  ← latency / memory / e2e harness used for BENCHMARKS.md
 ├── patches/
 │   ├── repo.patch                ← unified diff against NVlabs/Sana@485a6bb
 │   └── venv/                     ← drop-in replacements for fla and diffusers
