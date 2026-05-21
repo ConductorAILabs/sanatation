@@ -1,4 +1,4 @@
-# SANA-WM on Apple Silicon
+# SANA-WM on Apple Silicon — interactive runtime
 
 NVIDIA released [SANA-WM](https://github.com/NVlabs/Sana/pull/379), a bidirectional
 video "world model" — give it a still image and a camera path, get back a few
@@ -8,7 +8,24 @@ it imports `triton`, `mmcv`, `xformers`, `flash-linear-attention`,
 arm64 wheels.
 
 This repo is the set of patches that make SANA-WM import, load, and generate
-on an M-series Mac via PyTorch MPS. No CUDA, no Linux box, no cloud GPU.
+on an M-series Mac via PyTorch MPS, plus an interactive layer on top — walk
+the camera around with WASD, or run an LLM-driven adventure game where the
+visuals come from SANA. No CUDA, no Linux box, no cloud GPU.
+
+## Related work
+
+If you want **full-pipeline rendering** with the LTX-2 refiner (321-frame,
+20-second 720p clips), use [`osmapi/SANA-WM-Bidirectional-on-Apple-Silicon`](https://huggingface.co/osmapi/SANA-WM-Bidirectional-on-Apple-Silicon)
+by [junafinity](https://huggingface.co/blog/junafinity/sana-wm-bidirectional-on-apple-silicon).
+Their work uses subprocess staging to enforce a hard 96 GB memory budget so
+all three stages (Stage 1 DiT, LTX-2 refiner, LTX-2 VAE) never co-reside in
+memory. That's the right architecture for one-shot cinematic output.
+
+This repo focuses on the opposite axis: **short chunks, fast iteration, and
+interactive control loops** — explicitly listed as future work in their
+README. The two are complementary; we link to their patch set in
+`PATCHES_TECHNICAL.md` and plan to borrow their staging approach for our
+cinematic-finale mode.
 
 ## Quickstart
 
@@ -140,15 +157,18 @@ Examples:
 
 ## Who this is for
 
-- You want to run SANA-WM on your Mac and see what it does.
+- You want to **drive SANA-WM interactively** — walk the camera around, chain
+  short chunks, or have an LLM author scenes on the fly. (Pick this repo.)
 - You're porting some other CUDA-only video diffusion model to MPS and want to
   see what the workarounds look like — the patterns here generalize.
 - You work on PyTorch MPS at Apple and want a real-world stress test that
   exercises ~15 different MPS gaps simultaneously.
 
-If you need production-grade video on a Mac today, this is not it. If you want
-to see whether M-series silicon can host modern video diffusion at all — yes,
-and the path is shorter than you'd think.
+If you want **full-pipeline rendering with the LTX-2 refiner** in one shot,
+use [junafinity's port](https://huggingface.co/osmapi/SANA-WM-Bidirectional-on-Apple-Silicon)
+instead — they've worked out the memory contract for keeping all stages
+below 96 GB on a 128 GB Mac. We focus on Stage-1 only for now and plan to
+borrow their staging architecture for our cinematic-finale mode.
 
 ## Credits
 

@@ -181,6 +181,31 @@ SANA_WM_RESTORE_GDN=1
 
 `run.sh` sets all of these.
 
+## Related: subprocess staging (junafinity's approach)
+
+For **one-shot full-pipeline rendering** (Stage 1 + LTX-2 refiner + VAE decode
+in 321-frame 720p clips), the right architecture is subprocess staging. We
+don't ship that here — see [`osmapi/SANA-WM-Bidirectional-on-Apple-Silicon`](https://huggingface.co/osmapi/SANA-WM-Bidirectional-on-Apple-Silicon)
+for the canonical implementation. The core invariant they enforce:
+
+> Stage 1, refiner text encoder, refiner transformer, and VAE must never all
+> be resident at the same time.
+
+Each heavy model runs in its own subprocess, writes its output latent to
+disk, and exits — so macOS reclaims its pages before the next model loads.
+Their reported memory profile on an M3 Max 128 GB:
+
+| Stage | Peak RSS | MPS peak |
+|---|---|---|
+| Stage 1 DiT | ~12.9 GB | ~14 GB |
+| LTX-2 refiner | ~28.2 GB | ~37.8 GB |
+| LTX-2 VAE decode | ~3.4 GB | minimal (streaming) |
+
+This repo's `render.py` (work-in-progress) borrows the same pattern for our
+cinematic-finale mode — we keep the in-process pipeline for interactive use
+(`walk.py`, `adventure.py`) but isolate each stage in its own subprocess
+when rendering a final cut.
+
 ## Cleanup pass on top of the bridge
 
 After the portability work above, an 8-agent cleanup pass made the patched code
