@@ -56,12 +56,26 @@ def main() -> None:
     args = ap.parse_args()
 
     logger = get_root_logger()
-    meta_path = args.in_dir / "stage1.meta.json"
-    latent_path = args.in_dir / "stage1.latent.pt"
-    if not latent_path.exists() or not meta_path.exists():
-        raise SystemExit(f"missing stage1 outputs in {args.in_dir}")
+    stage1_meta_path = args.in_dir / "stage1.meta.json"
+    if not stage1_meta_path.exists():
+        raise SystemExit(f"missing stage1.meta.json in {args.in_dir}")
 
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    # Prefer the refined latent if it exists — that's the output of stages/refine.py.
+    refine_latent_path = args.in_dir / "refine.latent.pt"
+    refine_meta_path = args.in_dir / "refine.meta.json"
+    if refine_latent_path.exists() and refine_meta_path.exists():
+        latent_path = refine_latent_path
+        refine_meta = json.loads(refine_meta_path.read_text(encoding="utf-8"))
+        drop_first_frame = bool(refine_meta.get("drop_first_frame", False))
+        logger.info(f"[decode] using refined latent ({latent_path.name})")
+    else:
+        latent_path = args.in_dir / "stage1.latent.pt"
+        drop_first_frame = False
+        if not latent_path.exists():
+            raise SystemExit(f"missing stage1.latent.pt in {args.in_dir}")
+        logger.info(f"[decode] using stage1 latent ({latent_path.name})")
+
+    meta = json.loads(stage1_meta_path.read_text(encoding="utf-8"))
     output_dir = Path(meta["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
     name = meta["name"]
@@ -106,6 +120,11 @@ def main() -> None:
         .to("cpu", dtype=torch.uint8)
         .numpy()[0]
     )
+    if drop_first_frame:
+        # Refiner's first decoded frame is the clean sink anchor; drop it
+        # so the output starts from the first refined frame.
+        video_hwc = video_hwc[1:]
+        logger.info("[decode] dropped sink anchor frame")
     del samples, decoded
     _empty_cache(device)
     dec_s = time.time() - t_dec0

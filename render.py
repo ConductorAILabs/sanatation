@@ -72,6 +72,12 @@ def main() -> None:
     ap.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     ap.add_argument("--config", type=str, default=DEFAULT_CONFIG)
     ap.add_argument("--model-path", type=str, default=DEFAULT_MODEL)
+    ap.add_argument("--refine", action="store_true",
+                    help="Run the LTX-2 refiner stage between Stage 1 and decode. "
+                         "Adds substantial wall-clock and memory cost (~38 GB MPS peak per junafinity's "
+                         "M3 Max measurements) but gives output parity with the upstream CUDA pipeline.")
+    ap.add_argument("--sink-size", type=int, default=1, help="Refiner sink anchor frames.")
+    ap.add_argument("--refiner-seed", type=int, default=42)
     ap.add_argument("--keep-intermediates", action="store_true",
                     help="Don't delete the staging dir after success.")
     args = ap.parse_args()
@@ -108,18 +114,21 @@ def main() -> None:
         timings = {}
         timings["stage1"] = run_stage("stages.stage1", "--manifest", str(manifest_path),
                                        "--out-dir", str(staging_path))
+        if args.refine:
+            timings["refine"] = run_stage("stages.refine", "--dir", str(staging_path),
+                                           "--sink-size", str(args.sink_size),
+                                           "--seed", str(args.refiner_seed))
         timings["decode"] = run_stage("stages.decode", "--in-dir", str(staging_path))
 
         # Pull stage metadata for a one-line summary.
         decode_meta = json.loads((staging_path / "decode.meta.json").read_text(encoding="utf-8"))
         mp4_path = decode_meta["mp4_path"]
         total_s = sum(timings.values())
+        line = "  " + "   ".join(f"{stage}: {sec:.1f}s" for stage, sec in timings.items())
         print(
             f"\n{'='*68}\n"
             f"  Render complete: {mp4_path}\n"
-            f"  stage1: {timings['stage1']:.1f}s   "
-            f"decode: {timings['decode']:.1f}s   "
-            f"total: {total_s:.1f}s\n"
+            f"{line}   total: {total_s:.1f}s\n"
             f"{'='*68}"
         )
 

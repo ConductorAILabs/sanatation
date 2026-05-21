@@ -70,7 +70,7 @@ finale path and (once we add it) the LTX-2 refiner stage — see
 | Trained 15-GDN + 5-softmax hybrid topology | ✅ via `SANA_WM_RESTORE_GDN=1` |
 | 1280×704 video, 81 frames, 20 steps | ✅ ~2:20 end-to-end on M5 Pro Max |
 | Camera control from WASD / trajectory strings | ✅ |
-| LTX-2 refiner (Stage-2) | ⚠ patched but not validated end-to-end |
+| LTX-2 refiner (Stage-2) | ✅ via `render.py --refine`; ~42s for 9 frames on M5 Pro Max |
 | `cfg_scale > 1.0` | ❌ produces black frames — `null_embed` workaround pending |
 | Pi3X intrinsics estimation | ⚠ bypassed, use `--intrinsics` or default 55° FOV |
 | Real-time playback | ❌ each step is ~3–5 s; chess-pace at best |
@@ -137,9 +137,10 @@ sanatation/
 ├── run.sh                        ← one-shot Stage-1 inference with all env vars set
 ├── walk.py                       ← WASD camera walking; one keypress = one short chunk
 ├── adventure.py                  ← LLM-driven adventure game (Qwen via Ollama + SANA)
-├── render.py                     ← subprocess-staged renderer (Stage-1 → decode for now)
+├── render.py                     ← subprocess-staged renderer; --refine adds LTX-2 stage
 ├── stages/                       ← subprocess entry points used by render.py
 │   ├── stage1.py                 ←   loads pipeline, samples Stage-1 latent, exits
+│   ├── refine.py                 ←   loads LTX-2 refiner (Gemma3 + transformer), refines, exits
 │   └── decode.py                 ←   loads VAE only, decodes latent → MP4, exits
 ├── benchmark.py                  ← latency / memory / e2e harness used for BENCHMARKS.md
 ├── patches/
